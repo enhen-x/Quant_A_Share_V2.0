@@ -7,11 +7,12 @@
 paths:
   project_root: "."
   data_root: "data"
-  data_raw: "data/raw"            # 原始行情数据
-  data_processed: "data/processed" # 处理后的特征 & 标签
-  data_meta: "data/meta"          # 元数据（行业/名称/交易日历等）
-  models: "data/models"           # 模型保存路径
-  logs: "logs"                    # 日志路径
+  data_raw: "data/raw"              # 原始行情数据
+  data_cleaned: "data/raw_cleaned"  # 清洗后的原始数据
+  data_processed: "data/processed"  # 处理后的特征 & 标签
+  data_meta: "data/meta"            # 元数据（行业/名称/交易日历等）
+  models: "data/models"             # 模型保存路径
+  logs: "logs"                      # 日志路径
 
   # 注意：原 model_config.yaml 中使用了 G 盘绝对路径。
   # 建议代码中直接使用上述相对路径拼接。如果必须使用绝对路径，请在此处修改。
