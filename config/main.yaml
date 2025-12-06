@@ -1,0 +1,138 @@
+# config/main.yaml
+
+# ==============================================================================
+# 1. 路径配置 (Paths)
+# 对应原 config/paths.yaml 以及 model_config.yaml 中的路径定义
+# ==============================================================================
+paths:
+  project_root: "."
+  data_root: "data"
+  data_raw: "data/raw"            # 原始行情数据
+  data_processed: "data/processed" # 处理后的特征 & 标签
+  data_meta: "data/meta"          # 元数据（行业/名称/交易日历等）
+  models: "data/models"           # 模型保存路径
+  logs: "logs"                    # 日志路径
+
+  # 注意：原 model_config.yaml 中使用了 G 盘绝对路径。
+  # 建议代码中直接使用上述相对路径拼接。如果必须使用绝对路径，请在此处修改。
+  # processed_absolute: "g:/理财/Quant_A_Share_V2.0/data/processed"
+
+
+# ==============================================================================
+# 2. 数据源与下载配置 (Data Source)
+
+# ==============================================================================
+data:
+  source: "baostock"
+  start_date: "2010-01-01"
+  end_date: "2025-12-31"   # 可设置为 "auto" 以自动使用当前日期
+
+  # 增量更新时的配置
+  update:
+    tail_days: 15
+
+  # 股票池下载范围 (Primary Stock Pool)
+  stock_pool:
+    include_sh: true
+    include_sz: true
+    include_kcb: false     # 科创板
+    include_cyb: false     # 创业板
+    include_bj: false      # 北交所
+    exclude_st: true
+    only_tradable: true
+
+
+# ==============================================================================
+# 3. 预处理与特征工程 (Preprocessing)
+
+# ==============================================================================
+preprocessing:
+  # 基础设置
+  # (代码中建议直接读取 paths.data_processed，此处保留作为备用或特定子目录)
+  output_dir: "data/processed"
+
+  # 股票池二次筛选逻辑 (Universe & Filtering)
+  universe:
+    type: "all"            # "all" => 全市场股票 / hs300 / zz500
+    custom_list: []        # 若 type = "custom"，这里写股票代码列表
+
+  # 选股/过滤条件 (Filter Rules)
+  filter:
+    max_price: 25              # 允许的最高股价
+    min_turnover: 10000000     # 日均成交额下限
+    min_volume: 300000         # 最低成交量
+    min_days_listed: 120       # 上市至少 120 天
+    exclude_st: true           # 排除 ST
+    exclude_new: true          # 排除新股
+    min_mcap: 2000000000       # (2e9) 最小市值
+    max_mcap: 500000000000     # (5e11) 最大市值
+
+  # 特征工程配置 (Feature Engineering)
+  features:
+    enable_basic: true     # ret_1 / log_ret / 振幅等
+    enable_ma: true
+    enable_macd: true
+    enable_rsi: true
+    enable_kdj: true
+    enable_boll: true
+    enable_volume: true
+
+    # 特征参数
+    ma_windows: [5, 10, 20, 60]
+    rsi_window: 14
+    kdj_window: 9
+    boll_window: 20
+    boll_std: 2
+    # multi_scale_features: false
+
+  # 标签生成配置 (Label Generation)
+  labels:
+    target_type: "regression"
+    return_mode: "excess_index" # 收益模式
+    horizon: 5
+    index_code: "000300.SH"
+    index_dir: "index"
+    
+    binary_threshold: 0.0
+    multiclass:
+      up: 0.01
+      down: -0.01
+    quantile_bins: [0.2, 0.8]
+
+  # 数据存储批处理 (Batch Processing)
+  batch:
+    save_each: true        # 保存每只股票的 parquet 文件
+    concat_all: true       # 是否自动合并为一个大表
+    concat_file: "all_stocks.parquet" # 这里仅指定文件名，路径由 paths 决定
+
+
+# ==============================================================================
+# 4. 模型训练配置 (Model)
+
+# ==============================================================================
+model:
+  version: "auto"          # 自动检测最新版本
+  label_col: "label"
+  
+  # 数据集划分
+  train_val_split_date: "2018-12-31"
+  train_ratio: 0.8
+
+  # XGBoost 参数
+  params:
+    n_estimators: 2000
+    max_depth: 8
+    learning_rate: 0.03
+    subsample: 0.8
+    colsample_bytree: 0.9
+    tree_method: "hist"
+
+
+# ==============================================================================
+# 5. 策略配置 (Strategy)
+
+# ==============================================================================
+strategy:
+  mode: "long_topk"
+  top_k: 10
+  min_pred: 0.0

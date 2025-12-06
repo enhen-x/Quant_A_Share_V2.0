@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+*.egg-info/
+
+# Data files
+data/raw/*
+data/processed/*
+data/models/*
+data/price/*
+data/index/*
+data/meta/*
+!data/.gitkeep  # 保留空目录
+
+# Logs
+logs/*
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+
+# Parquet / 临时缓存
+*.parquet
+*.feather
+*.csv.tmp
+*.bak
+
+# Output figures
+figures/
+output/
+
+# Model checkpoints
+*.model
+*.json
+*.pkl
+
+# Local debug files
+tmp/
+cache/
