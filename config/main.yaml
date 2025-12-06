@@ -14,6 +14,10 @@ paths:
   models: "data/models"             # 模型保存路径
   logs: "logs"                      # 日志路径
 
+  # 分析模块输出路径
+  figures: "figures"             # 存放图片 (png/jpg)
+  reports: "reports"             # 存放分析报告 (csv/html)
+
   # 注意：原 model_config.yaml 中使用了 G 盘绝对路径。
   # 建议代码中直接使用上述相对路径拼接。如果必须使用绝对路径，请在此处修改。
   # processed_absolute: "g:/理财/Quant_A_Share_V2.0/data/processed"
@@ -137,3 +141,25 @@ strategy:
   mode: "long_topk"
   top_k: 10
   min_pred: 0.0
+
+
+# ==============================================================================
+# [新增] 6. 分析与可视化配置 (Analysis)
+# ==============================================================================
+analysis:
+  eda:
+    default_sample_size: 200     # 默认随机抽样的股票数量
+    random_seed: 42              # 随机种子，保证每次抽样的股票一样
+    
+    # 异常检测阈值
+    anomaly_threshold: 0.25      # 单日涨跌幅超过 25% 视为异常 (疑似未复权)
+    
+    # 绘图设置
+    plot:
+      style: "ggplot"            # matplotlib 风格
+      figure_size: [12, 6]       # 图片默认大小 [宽, 高]
+      font_sans_serif:           # 优先尝试的中文字体列表
+        - "SimHei"
+        - "Microsoft YaHei"
+        - "Arial Unicode MS"
+        - "DejaVu Sans"

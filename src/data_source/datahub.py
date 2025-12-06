@@ -23,7 +23,7 @@ class DataHub:
         
         # 默认使用 AkShare 作为数据源（因为 AkShare 对列表和日历支持更好）
         # 也可以根据配置切换
-        self.source = AkShareSource() 
+        self.source = BaostockSource() 
         # 如果需要 Baostock 的行情，可以在 fetch_price 里单独处理，或者在这里做更复杂的工厂模式
         
     # ==========================

@@ -51,3 +51,4 @@ output/
 # Local debug files
 tmp/
 cache/
+"reports/" 
