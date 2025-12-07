@@ -16,51 +16,68 @@ Quant_A_Share_V2.0 是一个面向 **A 股股票量化研究** 的完整工程�
 ## 📌 项目结构
 
 ```text
+## 📌 项目结构
+
+```text
 Quant_A_SHARE_V2.0/
-├── config/                     # 配置文件（路径、特征、模型、策略）
-│   ├── paths.yaml
-│   ├── data_config.yaml
-│   ├── model_config.yaml
-│   ├── preprocessing.yaml
-│   └── strategy_config.yaml
+├── config/
+│   └── main.yaml               # [变更] 核心配置文件（路径、数据源、预处理、模型参数等统一管理）
 │
-├── data/
-│   ├── raw/                    # 原始行情（每日更新）
-│   ├── raw_cleaned/            # [新增] 清洗后的标准行情（无重复/无异常/无零值）
-│   ├── processed/              # 特征矩阵 & 标签
-│   ├── price/                  # price_matrix.parquet
-│   ├── index/                  # 指数行情
-│   └── meta/                   # 股票列表 & 交易日历
+├── docs/                       # [新增] 文档与分析指南
+│   ├── EDA_GUIDE.md            # 探索性数据分析说明
+│   ├── FACTOR_ANALYSIS_REPORT.md # 因子有效性分析说明
+│   └── HORIZON_ANALYSIS_REPORT.md # 时间窗口敏感性分析说明
 │
-├── figures/                    # [新增] EDA 生成的可视化图表 (.png)
-├── reports/                    # [新增] EDA 生成的数据报告 (.csv)
+├── scripts/                    # 命令行脚本（入口）
+│   ├── init_stock_pool.py      # [Step 1] 初始化股票列表与交易日历
+│   ├── download_data.py        # [Step 2] 批量下载/断点续传行情数据
+│   ├── auto_run.py             # [Step 2+] 自动挂机下载（含防封控冷却逻辑）
+│   ├── update_data.py          # [Daily] 增量更新数据（日历/指数/个股）
+│   ├── clean_and_check.py      # [Step 3] 数据清洗与质量质检
+│   ├── run_eda.py              # [Analysis] 运行全维度探索性分析 (EDA)
+│   ├── rebuild_features.py     # [Step 4] 构建特征工程与标签 (Feature Engineering)
+│   ├── check_features.py       # [Analysis] 检查特征有效性 (IC/自相关/共线性)
+│   └── check_time_horizon.py   # [Analysis] 检查预测周期 (IC Decay)
 │
-├── scripts/                    # 命令行脚本
-│   ├── update_data.py          # 更新 raw 数据
-│   ├── build_index.py
-│   ├── build_price_matrix.py
-│   ├── rebuild_features.py
-│   ├── train_model.py
-│   ├── run_predict.py
-│   ├── run_backtest.py
-│   ├── run_build_portfolio.py
-│   ├── run_build_signals.py
-│   ├── check_dataset_quality.py
-│   └── test_datahub.py
+├── src/                        # 核心源代码库
+│   ├── analysis/               # [新增] 分析引擎模块
+│   │   ├── eda_engine.py       # EDA 绘图与统计核心
+│   │   ├── factor_checker.py   # 因子质量与IC分析器
+│   │   └── horizon_analyzer.py # 多周期 IC 衰减分析器
+│   │
+│   ├── data_source/            # 数据源适配层
+│   │   ├── base.py             # 接口基类
+│   │   ├── datahub.py          # 数据统一调度入口 (DataHub)
+│   │   ├── baostock_source.py  # Baostock 接口实现
+│   │   └── akshare_source.py   # AkShare 接口实现
+│   │
+│   ├── preprocessing/          # 预处理模块
+│   │   ├── pipeline.py         # 特征工程总流水线
+│   │   ├── features.py         # 特征计算工厂 (MA, MACD, RSI...)
+│   │   └── labels.py           # 标签生成工厂 (VWAP, 涨停过滤...)
+│   │
+│   └── utils/                  # 通用工具库
+│       ├── config.py           # 全局配置加载器 (单例模式)
+│       ├── logger.py           # 日志管理
+│       └── io.py               # 文件读写封装
 │
-├── src/
-│   ├── data_source/            # 数据源（akshare / baostock / datahub）
-│   ├── preprocessing/          # 特征、标签、Pipeline
-│   ├── model/                  # XGBoost 模型、训练器、预测器
-│   ├── strategy/               # 信号、组合与风险过滤
-│   ├── backtest/               # 回测框架
-│   └── utils/                  # 通用工具（日志、IO、质量评估）
+├── data/ (自动生成目录)
+│   ├── raw/                    # 原始行情 parquet
+│   ├── raw_cleaned/            # 清洗后的标准行情
+│   ├── processed/              # 最终特征矩阵 (如 all_stocks.parquet)
+│   ├── meta/                   # 股票元数据 & 交易日历
+│   └── index/                  # 指数数据
 │
-├── logs/                       # 日志输出（自动生成）
-├── README.md
-└── requirements.txt
+├── figures/ (自动生成)          # 存放 EDA/Factor 分析生成的图表 (.png)
+├── reports/ (自动生成)          # 存放分析生成的统计数据 (.csv)
+├── logs/                       # 运行日志
+│
+├── architecture.md             # 架构设计说明
+├── README.md                   # 项目说明文档
+└── requirements.txt            # 项目依赖
 ```
 
+---
 ## 🚀 Quick Start / 使用说明
 #  1. 安装依赖
 
@@ -70,6 +87,7 @@ Quant_A_SHARE_V2.0/
 pip install -r requirements.txt
 ```
 
+---
 
 # 2. 数据获取与更新 (Data Pipeline)
 
@@ -185,17 +203,136 @@ python scripts/run_eda.py --sample 500
 
 这样你的量化系统就拥有了一个坚实、干净的数据基础。
 
-
+---
 # 3. 构建特征（features）与标签（labels）
 
-基于 data/raw/ 中的行情数据，计算技术指标、因子，并生成训练标签，输出到 data/processed/：
+执行完整的特征工程流水线，将清洗后的行情数据 (`data/raw_cleaned`) 转化为可用于机器学习训练的特征矩阵 (`data/processed`)。
 
+**运行命令**：
 ```bash
 python scripts/rebuild_features.py
 ```
+**核心逻辑与配置**： 流水线行为由 `config/main.yaml` 中的 `preprocessing` 模块控制，主要包含以下三个阶段：
+
+**3.1 特征工程 (Feature Generation)**
+
+3.1 特征工程 (Feature Generation)
+支持各类经典技术指标的批量计算与归一化处理：
+
+* **趋势类**：MA (均线偏离度), MACD (差离值), Bollinger Bands (布林带位置/带宽)。
+
+* **动量/反转**：RSI (相对强弱), KDJ (随机指标), Amplitude (振幅)。
+
+* **量能**：Volume Ratio (量比), Turnover (换手率, log变换)。
+
+* **配置项**：可在 `config/main.yaml` 中开关特定因子或调整窗口参数（如 `ma_windows`, `rsi_window`）。
+
+**3.2 标签生成 (Label Generation) - v2.0 升级**
+
+构建了更贴近实战的训练目标（Label）：
+
+* **时序严谨**：基于 **T日信号 -> T+1日均价买入 -> T+1+N日均价卖出** 的逻辑计算收益，避免“用了未来数据”或“收盘无法成交”的偏差。
+
+* **VWAP 计价**：优先使用 **成交均价 (VWAP)** 代替收盘价计算收益率，减少尾盘脉冲对标签的噪声干扰。
+
+* **超额收益 (Excess Return)**：自动扣除基准指数（如沪深300）同期收益，训练模型寻找跑赢大盘的 Alpha。
+
+* **一字板过滤**：自动剔除 **T+1日一字涨停** 的样本（Label设为 NaN），防止模型学习到“买不进去的虚假暴利”。
+
+* **多周期支持**：根据 `horizon` 参数生成不同持有期（如 5日、10日）的标签。
+
+**3.3 数据合并 (Batch Processing)**
+
+* **单文件输出**：每只股票的特征存放在 `data/processed/{symbol}.parquet`。
+
+* **全量合并**：脚本最后会自动将全市场所有股票数据合并为一张大表 `data/processed/all_stocks.parquet`，这是后续模型训练的直接输入。
+
+### 更新说明：
+
+1.  **明确数据源**：指出了输入源改为清洗后的 `data/raw_cleaned`，而非原始的 `data/raw`。
+2.  **细化特征描述**：根据 `features.py` 的代码，列举了具体的指标类型（MA, MACD, RSI, KDJ, BOLL 等）。
+3.  **强调 Label 逻辑**：这是 v2.0 的核心改进，根据 `labels.py` 补充了 VWAP、T+1 时序、超额收益和一字板过滤的说明，这些是量化实战中非常关键的细节。
+4.  **产出物说明**：明确了最终产出是 `all_stocks.parquet`，方便后续步骤引用。
+
+--- 
+# 4. 数据分析与检查 (Analysis & Checks)
+
+为确保数据质量与因子有效性，本项目内置了完整的分析模块 `src/analysis`，并提供了三份配套的分析报告指南（Docs）。
+
+### 4.1 探索性数据分析 (EDA)
+在特征工程之前，对清洗后的数据进行全维度的质量扫描，确保没有混入“脏数据”。
+
+- **执行脚本**：
+
+```bash
+python scripts/run_eda.py
+```
+
+* **核心检查点：**
+
+ * **数据完整性**：检查个股停牌率分布，识别长期停牌的垃圾股。
+
+ * **流动性分布**：检查成交额/换手率分布，识别流动性枯竭的“僵尸股”。
+
+ * **数据对齐**：随机抽样个股与大盘走势对比，验证复权处理是否正确。
+
+ * **市场特征**：统计收益率分布（尖峰肥尾）与自相关性。
+
+* 📘 **详细指南**：请阅读 `docs/EDA_GUIDE.md` 以获取图表解读说明。
+
+### 4.2 因子有效性分析 (Factor Analysis)
+在特征工程之后，评估计算出的因子（Features）对标签（Labels）的预测能力，并进行安全性检查。
+
+* **执行脚本**：
+
+```Bash
+python scripts/check_features.py
+```
+
+* **核心检查点**：
+
+ * **IC 分析 (Information Coefficient)**：计算每个特征与未来收益的相关系数 (RankIC)，判断因子是否有效。
+
+ * **未来函数检测**：如果某因子 IC > 0.8，脚本会发出警告，提示可能存在未来数据泄露。
+
+ * **多重共线性**：生成相关性热力图，辅助剔除高度冗余的特征。
+
+ * **标签分布**：检查训练目标（Label）是否符合正态分布，是否需要对数变换。
+
+* 📘 **详细指南**：请阅读 `docs/FACTOR_ANALYSIS_REPORT.md`。
+
+### 4.3 时间窗口敏感性分析 (Horizon Analysis)
+
+回答“模型预测几天后的收益最准？”这一核心问题，指导 `config/main.yaml` 中 `horizon` 参数的设置。
+
+* **执行脚本**：
+
+```Bash
+python scripts/check_time_horizon.py
+```
+
+* 核心检查点：
+
+ * **IC 衰减曲线 (Decay Curve)**：绘制 Top 因子在 1d, 3d, 5d, 10d, 20d 不同预测周期下的表现。
+
+ * **最佳周期判定**：
+
+  * **快速衰减型**：适合做超短线（High Frequency）。
+
+  * **发散增强型**：适合做波段趋势（Trend Following）。
+
+* 📘 **详细指南**：请阅读 `docs/HORIZON_ANALYSIS_REPORT.md`。
+
+📊 **产出物位置**： 所有分析生成的**可视化图表**均保存在 `figures/` 目录下（按时间戳归档）,**统计数据表**保存在 `reports/` 目录下。
 
 
-# 4. 训练模型（支持多版本）
+### 内容来源说明：
+1.  **EDA 部分**：依据 `scripts/run_eda.py` 和 `docs/EDA_GUIDE.md`，涵盖了停牌率、流动性、对齐检查等功能。
+2.  **Factor Analysis 部分**：依据 `scripts/check_features.py` 和 `docs/FACTOR_ANALYSIS_REPORT.md`，涵盖了 IC 分析、未来函数检测和共线性检查。
+3.  **Horizon Analysis 部分**：依据 `scripts/check_time_horizon.py` 和 `docs/HORIZON_A
+
+---
+# 5. 训练模型（支持多版本）
 
 使用 XGBoost 对多只股票合并样本进行训练，自动完成训练集 / 验证集划分，并保存模型与评估指标：
 
@@ -209,7 +346,7 @@ python scripts/train_model.py
 -保存模型、评估指标和基础回测结果
 
 
-# 5. 生成预测信号
+# 6. 生成预测信号
 
 基于最新特征数据和训练好的模型，生成逐日逐股的超额收益打分 / 概率：
 
@@ -225,7 +362,7 @@ data/models/{version}/
 ```
 
 
-# 6. 回测（单策略 / 多策略）
+# 7. 回测（单策略 / 多策略）
 
 对生成的信号和组合进行历史回测：
 
