@@ -45,9 +45,13 @@
 ## 📌 项目结构
 
 ```text
+## 📌 项目结构 (Project Structure)
+
 Quant_A_SHARE_V2.0/
 ├── config/
-│   └── main.yaml               # [核心] 全局配置文件（路径、数据源、风控参数、模型参数、回测配置）
+│   └── main.yaml               # [核心] 全局配置文件
+│                               # 包含：路径、数据源、风控参数(市值/价格)、模型参数(滚动训练配置)、
+│                               # 策略参数(Top-K/动态仓位/择时)、回测配置(成本/轮动模式)。
 │
 ├── docs/                       # [文档] 分析指南
 │   ├── EDA_GUIDE.md            # 探索性数据分析 (EDA) 结果解读指南
@@ -64,9 +68,15 @@ Quant_A_SHARE_V2.0/
 │   ├── rebuild_features.py     # [Step 3] 特征工程流水线 (Features + Labels + Filtering)
 │   ├── check_features.py       # [Analysis] 因子有效性检查 (IC 分析/多重共线性/未来函数检测)
 │   ├── check_time_horizon.py   # [Analysis] 最佳持仓周期分析 (IC Decay)
-│   ├── train_model.py          # [Step 4] 模型训练 (XGBoost, 自动划分验证集)
-│   ├── run_backtest.py         # [Step 5] 策略回测 (生成资金曲线与评估指标)
-│   └── run_recommendation.py   # [App] 每日推荐 (生成 Top-K 选股列表)
+│   ├── run_walkforward.py      # [Step 4 - New] 滚动训练 (Walk-Forward Validation)
+│                               # 模拟真实时间流逝，每年重新训练模型，生成无未来函数的预测集。
+│   ├── train_model.py          # [Step 4 - Legacy] 单次模型训练 (仅用于快速测试)
+│   ├── run_backtest.py         # [Step 5] 策略回测
+│                               # 支持分仓轮动(Periodic)、动态仓位、严谨成交(剔除涨停/高开)。
+│   ├── check_stress_test.py    # [Test - New] 策略压力测试
+│                               # 测试策略在不同交易成本及历史极端熊市(如2024微盘股危机)下的生存能力。
+│   └── run_recommendation.py   # [App] 每日推荐 (Daily Picks)
+│                               # 智能寻找最新模型，生成含备选的 Top-K 股票池，自动过滤今日涨停股。
 │
 ├── src/                        # [源码] 核心逻辑库
 │   ├── analysis/               # 分析引擎模块
@@ -75,25 +85,27 @@ Quant_A_SHARE_V2.0/
 │   │   └── horizon_analyzer.py # 多周期 IC 衰减分析器
 │   │
 │   ├── backtest/               # 回测模块
-│   │   └── backtester.py       # 向量化回测引擎 (含分仓轮动与成本计算)
+│   │   └── backtester.py       # 向量化回测引擎
+│   │                           # 特性：支持 Periodic/Rolling 轮动、动态成本覆盖、开盘涨停废单逻辑。
 │   │
 │   ├── data_source/            # 数据源适配层 (Facade模式)
 │   │   ├── base.py             # 接口基类
 │   │   ├── datahub.py          # 数据统一调度入口
-│   │   ├── akshare_source.py   # AkShare 接口实现 (列表/日历/行情)
-│   │   └── baostock_source.py  # Baostock 接口实现 (备用行情)
+│   │   ├── akshare_source.py   # AkShare 接口实现
+│   │   └── baostock_source.py  # Baostock 接口实现
 │   │
 │   ├── model/                  # 机器学习模块
-│   │   ├── trainer.py          # 训练流程管理器 (版本控制/模型保存)
-│   │   └── xgb_model.py        # XGBoost 模型封装
+│   │   ├── trainer.py          # 训练流程管理器 (支持单次及滚动训练调用)
+│   │   └── xgb_model.py        # XGBoost 模型封装 (支持 GPU/Hist 模式)
 │   │
 │   ├── preprocessing/          # 预处理模块
 │   │   ├── pipeline.py         # 特征工程总流水线 (含 Row-level 过滤)
-│   │   ├── features.py         # 特征计算工厂 (MA, MACD, RSI, KDJ, BOLL, Vol...)
-│   │   └── labels.py           # 标签生成工厂 (三相屏障/VWAP/超额收益)
+│   │   ├── features.py         # 特征计算工厂 (MA, MACD, RSI, KDJ, BOLL, Vol, Cap...)
+│   │   └── labels.py           # 标签生成工厂 (三相屏障/VWAP/超额收益/一字板剔除)
 │   │
 │   ├── strategy/               # 策略模块
-│   │   └── signal.py           # 信号生成器 (TopK 排序 + 严格风控过滤)
+│   │   └── signal.py           # 信号生成器
+│   │                           # 特性：TopK 排序 + 双均线动态仓位(Position Control) + 涨停过滤 + 市值风控。
 │   │
 │   └── utils/                  # 通用工具库
 │       ├── config.py           # 全局配置加载器 (单例)
@@ -101,15 +113,17 @@ Quant_A_SHARE_V2.0/
 │       └── io.py               # 文件读写封装
 │
 ├── data/ (自动生成目录)
-│   ├── raw/                    # 原始行情数据 (.parquet)
+│   ├── raw/                    # 原始行情数据
 │   ├── raw_cleaned/            # 清洗后的标准行情
 │   ├── processed/              # 最终特征矩阵 (all_stocks.parquet)
 │   ├── meta/                   # 股票列表与交易日历
-│   ├── models/                 # 模型文件与预测结果 (按版本号归档)
+│   ├── models/                 # 模型仓库
+│   │   ├── WF_YYYYMMDD.../     # 滚动训练生成的年度模型集与全量预测表
+│   │   └── YYYYMMDD.../        # 单次训练的模型存档
 │   └── index/                  # 指数数据
 │
 ├── figures/ (自动生成)          # 分析图表 (.png)
-├── reports/ (自动生成)          # 分析报告数据 (.csv)
+├── reports/ (自动生成)          # 分析报告 & 每日推荐 (.csv)
 ├── logs/                       # 运行日志
 │
 ├── architecture.md             # 架构设计说明
