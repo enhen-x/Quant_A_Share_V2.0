@@ -149,8 +149,13 @@ class PreprocessPipeline:
                 # D. 生成标签
                 df = self.label_gen.run(df)
                 
-                # E. 清洗 NaN
-                df_clean = df.dropna().reset_index(drop=True)
+                # E. 清洗 NaN [修改版]
+                # 1. 识别特征列 (以 feat_ 开头) 和 基础列
+                # 我们只剔除那些连特征都算不出来的行 (比如刚上市前几天无法算MA60)
+                check_cols = [c for c in df.columns if c.startswith("feat_") or c in ["close", "volume"]]
+                
+                # 2. 仅对特征列进行 dropna，保留 Label 为 NaN 的行 (用于预测)
+                df_clean = df.dropna(subset=check_cols).reset_index(drop=True)
                 
                 if df_clean.empty:
                     continue

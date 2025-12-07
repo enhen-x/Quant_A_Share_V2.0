@@ -108,6 +108,16 @@ preprocessing:
     target_type: "regression"
     return_mode: "excess_index" # 收益模式
     horizon: 5
+
+    # === 新增：标签生成方法 ===
+    # 可选: "fixed_time" (原版固定周期) / "triple_barrier" (三相屏障)
+    method: "fixed_time"
+    
+    # === 新增：三相屏障参数 ===
+    triple_barrier:
+      pt: 0.10    # Profit Taking (止盈阈值, e.g. 10%)
+      sl: 0.05    # Stop Loss (止损阈值, e.g. 5%)
+
     use_vwap: true         # 开启 VWAP 计价
     filter_limit: true     # 开启一字板过滤
     index_code: "000300.SH"
@@ -161,8 +171,8 @@ model:
 # ==============================================================================
 strategy:
   mode: "long_topk"
-  top_k: 10
-  min_pred: 0.0
+  top_k: 5
+  min_pred: -999
 
 
 # ==============================================================================

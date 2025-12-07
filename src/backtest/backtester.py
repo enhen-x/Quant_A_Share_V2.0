@@ -22,7 +22,7 @@ class VectorBacktester:
         
         # 交易成本 (双边万分之三佣金 + 卖出千一印花税 + 滑点 ≈ 单边千 1.5)
         # 适当调高成本以模拟真实滑点
-        self.cost_rate = 0.0015 
+        self.cost_rate = 0.015 
         
     def load_data(self):
         """加载全量行情并计算【次日】收益"""
