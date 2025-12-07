@@ -1,15 +1,41 @@
 # Quant_A_Share_V2.0
 
-Quant_A_Share_V2.0 是一个面向 **A 股股票量化研究** 的完整工程框架，覆盖数据获取、预处理、特征工程、标签生成、模型训练、预测、策略、回测以及可视化等全过程。
 
-项目目标：
+# 🎯 项目目标 (Project Goals)
 
-- 构建统一的数据流水线  
-- 支持多数据源（Akshare / Baostock / DataHub）  
-- 训练跨股票的机器学习模型（如 XGBoost）  
-- 自动生成交易信号、构建组合并进行回测  
-- 支持多种验证方式（多样化回测、Monte Carlo、Walk-forward）  
-- 为未来引入深度学习、RL、实时交易做准备  
+**Quant_A_Share_V2.0** 致力于为个人投资者打造一个**基于机器学习的 A 股量化决策系统**。本项目不追求复杂的黑盒魔法，而是强调工程化、透明化和可验证性，旨在解决散户在量化投资中面临的“数据乱、回测假、落地难”三大痛点。
+
+核心目标包括：
+
+1.  **构建工业级数据流水线**：实现从数据下载、清洗、质检到特征工程的全自动化闭环，确保输入模型的每一条数据都干净、可靠。
+2.  **机器学习驱动选股**：摒弃传统的线性因子叠加，利用 XGBoost 等机器学习模型挖掘非线性市场规律，支持**三相屏障 (Triple Barrier)** 等机构级标签构建方法。
+3.  **严谨的策略验证体系**：提供**探索性数据分析 (EDA)**、**因子有效性检测 (IC)** 和**防未来函数回测**等多维度的评估工具，拒绝“过拟合”的虚假回测。
+4.  **实战导向的推荐能力**：不仅能跑回测，更能每日生成可执行的**精选股票推荐列表**，打通从研究到交易的“最后一公里”。
+
+---
+
+# 🧪 目前进度 (Current Progress)
+
+截至目前 (V2.0)，项目已完成**全流程闭环**的开发，核心模块均已就绪：
+
+### ✅ 1. 数据基础设施 (Data Infrastructure)
+* **多源数据获取**：支持 Baostock / AkShare 双源切换，实现全市场股票列表、交易日历及日线行情的**断点续传**与**增量更新**。
+* **智能清洗质检**：内置自动清洗脚本，自动识别并剔除**高停牌率**、**流动性枯竭 (僵尸股)** 及**数据严重缺失**的标的，输出质量体检报告。
+
+### ✅ 2. 深度分析引擎 (Analysis Engine)
+* **全维 EDA 分析**：支持停牌率分布、收益率自相关性、价格走势对齐等多维度的数据“体检”。
+* **因子评价体系**：实现了 IC (Information Coefficient) 分析、因子衰减 (Decay) 曲线及多重共线性检测，量化评估特征有效性。
+* **时间窗口探测**：独创的时间敏感性分析，辅助决策模型预测的最佳周期 (Horizon)。
+
+### ✅ 3. 特征与模型 (Feature & Model)
+* **特征工程**：内置 MA, MACD, RSI, KDJ, Bollinger, 量比等经典技术指标库，支持向量化批量计算。
+* **高级标签生成**：支持 **三相屏障法 (Triple Barrier Method)**，结合 **VWAP (成交均价)** 计算真实收益，并自动剔除一字涨停样本。
+* **模型训练**：集成了 **XGBoost** 树模型，支持自动划分训练/验证集、模型保存与版本管理。
+
+### ✅ 4. 策略与回测 (Strategy & Backtest)
+* **Top-K 选股策略**：基于模型预测分，结合价格、市值、板块等风控规则进行每日精选。
+* **向量化回测引擎**：实现了支持**分仓轮动**的高效回测框架，严格执行 T+1 交易逻辑，内置交易成本扣除，输出资金曲线与夏普比率。
+* **每日推荐系统**：提供一键式脚本，基于最新行情生成**每日潜力股名单 (Daily Picks)**。  
 
 ---
 
@@ -21,55 +47,69 @@ Quant_A_Share_V2.0 是一个面向 **A 股股票量化研究** 的完整工程�
 ```text
 Quant_A_SHARE_V2.0/
 ├── config/
-│   └── main.yaml               # [变更] 核心配置文件（路径、数据源、预处理、模型参数等统一管理）
+│   └── main.yaml               # [核心] 全局配置文件（路径、数据源、风控参数、模型参数、回测配置）
 │
-├── docs/                       # [新增] 文档与分析指南
-│   ├── EDA_GUIDE.md            # 探索性数据分析说明
-│   ├── FACTOR_ANALYSIS_REPORT.md # 因子有效性分析说明
-│   └── HORIZON_ANALYSIS_REPORT.md # 时间窗口敏感性分析说明
+├── docs/                       # [文档] 分析指南
+│   ├── EDA_GUIDE.md            # 探索性数据分析 (EDA) 结果解读指南
+│   ├── FACTOR_ANALYSIS_REPORT.md # 因子有效性与 IC 分析解读指南
+│   └── HORIZON_ANALYSIS_REPORT.md # 预测周期 (Horizon) 敏感性分析解读指南
 │
-├── scripts/                    # 命令行脚本（入口）
-│   ├── init_stock_pool.py      # [Step 1] 初始化股票列表与交易日历
-│   ├── download_data.py        # [Step 2] 批量下载/断点续传行情数据
-│   ├── auto_run.py             # [Step 2+] 自动挂机下载（含防封控冷却逻辑）
+├── scripts/                    # [入口] 命令行执行脚本
+│   ├── init_stock_pool.py      # [Step 0] 初始化股票池与交易日历 (基于 AkShare)
+│   ├── download_data.py        # [Step 1] 批量下载/断点续传行情数据
+│   ├── auto_run.py             # [Step 1+] 全自动挂机下载（含防封控冷却重启逻辑）
 │   ├── update_data.py          # [Daily] 增量更新数据（日历/指数/个股）
-│   ├── clean_and_check.py      # [Step 3] 数据清洗与质量质检
+│   ├── clean_and_check.py      # [Step 2] 数据清洗与质检（去重、停牌过滤、僵尸股剔除）
 │   ├── run_eda.py              # [Analysis] 运行全维度探索性分析 (EDA)
-│   ├── rebuild_features.py     # [Step 4] 构建特征工程与标签 (Feature Engineering)
-│   ├── check_features.py       # [Analysis] 检查特征有效性 (IC/自相关/共线性)
-│   └── check_time_horizon.py   # [Analysis] 检查预测周期 (IC Decay)
+│   ├── rebuild_features.py     # [Step 3] 特征工程流水线 (Features + Labels + Filtering)
+│   ├── check_features.py       # [Analysis] 因子有效性检查 (IC 分析/多重共线性/未来函数检测)
+│   ├── check_time_horizon.py   # [Analysis] 最佳持仓周期分析 (IC Decay)
+│   ├── train_model.py          # [Step 4] 模型训练 (XGBoost, 自动划分验证集)
+│   ├── run_backtest.py         # [Step 5] 策略回测 (生成资金曲线与评估指标)
+│   └── run_recommendation.py   # [App] 每日推荐 (生成 Top-K 选股列表)
 │
-├── src/                        # 核心源代码库
-│   ├── analysis/               # [新增] 分析引擎模块
+├── src/                        # [源码] 核心逻辑库
+│   ├── analysis/               # 分析引擎模块
 │   │   ├── eda_engine.py       # EDA 绘图与统计核心
-│   │   ├── factor_checker.py   # 因子质量与IC分析器
+│   │   ├── factor_checker.py   # 因子质量分析器 (IC/RankIC/分布)
 │   │   └── horizon_analyzer.py # 多周期 IC 衰减分析器
 │   │
-│   ├── data_source/            # 数据源适配层
+│   ├── backtest/               # 回测模块
+│   │   └── backtester.py       # 向量化回测引擎 (含分仓轮动与成本计算)
+│   │
+│   ├── data_source/            # 数据源适配层 (Facade模式)
 │   │   ├── base.py             # 接口基类
-│   │   ├── datahub.py          # 数据统一调度入口 (DataHub)
-│   │   ├── baostock_source.py  # Baostock 接口实现
-│   │   └── akshare_source.py   # AkShare 接口实现
+│   │   ├── datahub.py          # 数据统一调度入口
+│   │   ├── akshare_source.py   # AkShare 接口实现 (列表/日历/行情)
+│   │   └── baostock_source.py  # Baostock 接口实现 (备用行情)
+│   │
+│   ├── model/                  # 机器学习模块
+│   │   ├── trainer.py          # 训练流程管理器 (版本控制/模型保存)
+│   │   └── xgb_model.py        # XGBoost 模型封装
 │   │
 │   ├── preprocessing/          # 预处理模块
-│   │   ├── pipeline.py         # 特征工程总流水线
-│   │   ├── features.py         # 特征计算工厂 (MA, MACD, RSI...)
-│   │   └── labels.py           # 标签生成工厂 (VWAP, 涨停过滤...)
+│   │   ├── pipeline.py         # 特征工程总流水线 (含 Row-level 过滤)
+│   │   ├── features.py         # 特征计算工厂 (MA, MACD, RSI, KDJ, BOLL, Vol...)
+│   │   └── labels.py           # 标签生成工厂 (三相屏障/VWAP/超额收益)
+│   │
+│   ├── strategy/               # 策略模块
+│   │   └── signal.py           # 信号生成器 (TopK 排序 + 严格风控过滤)
 │   │
 │   └── utils/                  # 通用工具库
-│       ├── config.py           # 全局配置加载器 (单例模式)
+│       ├── config.py           # 全局配置加载器 (单例)
 │       ├── logger.py           # 日志管理
 │       └── io.py               # 文件读写封装
 │
 ├── data/ (自动生成目录)
-│   ├── raw/                    # 原始行情 parquet
+│   ├── raw/                    # 原始行情数据 (.parquet)
 │   ├── raw_cleaned/            # 清洗后的标准行情
-│   ├── processed/              # 最终特征矩阵 (如 all_stocks.parquet)
-│   ├── meta/                   # 股票元数据 & 交易日历
+│   ├── processed/              # 最终特征矩阵 (all_stocks.parquet)
+│   ├── meta/                   # 股票列表与交易日历
+│   ├── models/                 # 模型文件与预测结果 (按版本号归档)
 │   └── index/                  # 指数数据
 │
-├── figures/ (自动生成)          # 存放 EDA/Factor 分析生成的图表 (.png)
-├── reports/ (自动生成)          # 存放分析生成的统计数据 (.csv)
+├── figures/ (自动生成)          # 分析图表 (.png)
+├── reports/ (自动生成)          # 分析报告数据 (.csv)
 ├── logs/                       # 运行日志
 │
 ├── architecture.md             # 架构设计说明
@@ -332,92 +372,104 @@ python scripts/check_time_horizon.py
 3.  **Horizon Analysis 部分**：依据 `scripts/check_time_horizon.py` 和 `HORIZON_ANALYSIS_REPORT.md`
 
 ---
-# 5. 训练模型（支持多版本）
+# 5. 训练模型 (Model Training)
 
-使用 XGBoost 对多只股票合并样本进行训练，自动完成训练集 / 验证集划分，并保存模型与评估指标：
+执行以下命令，基于生成的特征矩阵训练预测模型：
 
 ```bash
 python scripts/train_model.py
 ```
+**核心逻辑**：
 
-训练器会自动：
--读取最新 processed 数据
--进行版本管理（例如 h5_excess_index_regression）
--保存模型、评估指标和基础回测结果
+ 1. **读取数据**：自动加载 `data/processed/all_stocks.parquet` 全量特征数据。
+
+ 2. **时序切分**：根据 `config/main.yaml` 中的 `train_val_split_date`（如 2019-01-01）将数据划分为训练集和验证集，严防未来信息泄露。
+
+ 3. **模型训练**：使用配置中的超参数训练 **XGBoost** 模型。
+
+ 4. **生成预测**：对全量数据（训练集+验证集）生成预测分数，方便后续分析历史拟合情况。
+
+ 5. **版本归档**：自动生成带时间戳的版本目录（如 `20231201_100000`），保存模型产物。
+
+**配置说明 (`config/main.yaml`)**：
+
+- `model.label_col`: 目标标签列名（默认 `label`，对应 feature engineering 阶段生成的 `label_5d` 等）。
+
+- `model.params`: XGBoost 核心参数（`learning_rate`, `max_depth`, `n_estimators` 等）。
+
+- `model.train_val_split_date`: 训练/验证集切分日期。
+
+**输出产物 (`data/models/{version}/`)**：
+
+- `model.json`: 训练好的模型文件（可用于后续加载和推理）。
+
+- `predictions.parquet`: 包含 `date`, `symbol`, `close`, `label`, `pred_score` 的预测结果表，是下一步回测的直接输入。
+
+---
 
 
-# 6. 生成预测信号
+# 6. 回测 (Backtesting) - 策略验证
 
-基于最新特征数据和训练好的模型，生成逐日逐股的超额收益打分 / 概率：
+本项目内置了基于**向量化（Vectorized）的高效回测引擎，支持模拟真实的分仓轮动**交易模式。
 
-```bash
-python scripts/run_predict.py
-```
-
-输出示例：
-
-```text
-data/models/{version}/
-  └── predictions.parquet   # 包含 ts_code / trade_date / score 等字段
-```
-
-
-# 7. 回测（单策略 / 多策略）
-
-对生成的信号和组合进行历史回测：
-
+执行命令：
 ```bash
 python scripts/run_backtest.py
 ```
 
-项目支持：
-- 单一策略回测
-- 多策略组合回测
-- Monte Carlo 多样化回测
-- Walk-forward 滚动回测
-回测结果（净值曲线、收益指标等）会保存到：
+该脚本会自动寻找 `data/models/` 下最新的模型版本，加载其生成的预测分数 (`predictions.parquet`)，并执行以下核心流程：
 
-```text
-data/models/{version}/backtest_results.parquet
-logs/                          # 详细日志（含配置与统计信息）
-```
+**7.1 核心机制**:
 
-📊 数据质量检查
+1. **策略信号生成** (`TopKSignalStrategy`)
 
-对当前数据集进行质量审计：日期缺口、停牌区间、异常波动、异常成交量等。
+- **风控过滤**：在生成信号前，自动应用严格的过滤规则（剔除 ST/退市、流动性枯竭、低价股、科创板/创业板等），配置与 `config/main.yaml` 中的 filter 模块一致。
 
-```bash
-python scripts/check_dataset_quality.py
-```
+- **Top-K 选股**：根据模型预测分数（Score），每日选取排名前 K 的股票（默认 `top_k=5`）。
 
-会生成：
-- 每只股票的数据质量报告
-- 停牌天数、异常涨跌幅、异常成交量统计
-- 是否需要剔除的“问题样本”参考
-输出示例：
+2. **分仓轮动机制 (Signal Expansion)**
 
-```text
-data/dataset_quality_report.csv
-```
+- **滚动持仓**：如果 `horizon=5`（持有 5 天），回测引擎不会在第 5 天一次性全卖，而是采用每日换仓 1/N 的模式。
 
+- **逻辑**：T 日产生的信号，会在未来 T+1 至 T+5 日内持续生效。资金被平分为 5 份，每天仅对其中的 1/5 进行调仓（卖出 5 天前买入的，买入当天新入选的）。
 
-🧪 当前已完成的能力（项目进展）
-- √ 全市场 A 股数据下载与更新
-- √ 自动构建价格矩阵
-- √ 清洗与质量检查
-- √ **数据探索性分析 (EDA) 与可视化** <-- 新增这一项
-- √ 特征工程 + 标签生成
-- ...
+- **优势**：这种模式能平滑资金曲线，减少单一日期市场波动的影响，更贴近量化基金的实盘操作。
 
+3. **严谨的收益计算**
 
-📌 Roadmap（下一步计划）
+- **次日成交 (Next-Day Execution)**：严格遵守 **T 日预测 -> T+1 日开盘/均价成交** 的时序，使用 T+1 日的涨跌幅 (`next_pct_chg`) 计算收益，杜绝“未来函数”。
 
-- 增强可视化模块（净值曲线、收益分布、IC 热力图等）
-- 完善多样化回测（Monte Carlo / Walk-Forward）
-- 增加特征重要性与模型可解释性（如 SHAP）
-- 引入强化学习策略模块
-- 接入实盘账户进行模拟交易（live engine）
+- **成本估算**：内置交易成本扣除逻辑（默认双边滑点+佣金+印花税 ≈ 千分之 1.5），在分仓模式下按每日实际换手率计算扣费。
 
+**7.2 回测产物**
+回测结果将保存在 `data/models/{version}/backtest_result/` 目录下：
+
+- `equity_curve.png`：资金曲线图。
+
+ - **上图 (Linear)**：展示策略净值 vs 基准指数（沪深300）的线性走势。
+
+ - **下图 (Log)**：对数坐标图，用于观察早期的超额收益情况。
+
+- `backtest_equity.csv`：每日净值数据（策略净值、基准净值），可用于进一步分析。
+
+- *控制台输出*：包含 年化收益率 (Annual Return)、夏普比率 (Sharpe Ratio)、最大回撤 (Max Drawdown) 等关键指标。
+
+---
+
+# 📌 未来计划 (Roadmap)
+
+我们计划在后续版本中逐步引入以下高级特性，进一步提升系统的实战能力：
+
+* **P1 (近期): 可视化增强**
+    * 增加回测结果的交互式图表 (HTML 报告)。
+    * 提供特征重要性 (Feature Importance) 与 SHAP 值分析，提升模型可解释性。
+* **P2 (中期): 进阶回测体系**
+    * 引入 **Walk-Forward Analysis (滚动回测)**，评估策略在时间推移下的稳定性。
+    * 引入 **Monte Carlo (蒙特卡洛模拟)**，评估策略在极端市场环境下的风险边界。
+* **P3 (远期): 深度学习与实盘**
+    * 接入 LSTM / Transformer 等时序深度学习模型。
+    * 开发 **Live Engine**，对接实盘/模拟盘 API，实现信号自动下单。
+    * 构建 Web Dashboard，实现从命令行工具到图形化平台的升级。
 
 # 📄 License
 
