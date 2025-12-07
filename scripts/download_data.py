@@ -230,7 +230,7 @@ def main():
     download_indices(datahub, force_reload=args.force)
     
     # 3. 执行合并 
-    merge_data_files()
+    # merge_data_files()
 
 if __name__ == "__main__":
     main()

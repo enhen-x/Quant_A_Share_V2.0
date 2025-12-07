@@ -110,6 +110,11 @@ preprocessing:
     concat_all: true       # 是否自动合并为一个大表
     concat_file: "all_stocks.parquet" # 这里仅指定文件名，路径由 paths 决定
 
+  # [新增] 数据质量清洗阈值
+  quality:
+    max_suspension_rate: 0.1   # 停牌天数超过 10% 则剔除
+    min_avg_turnover: 1.0      # 日均换手率低于 1% 则剔除 (僵尸股)
+
 
 # ==============================================================================
 # 4. 模型训练配置 (Model)

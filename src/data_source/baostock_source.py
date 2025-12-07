@@ -19,8 +19,17 @@ class BaostockSource(BaseDataSource):
             logger.info("Baostock 登录成功")
 
     def __del__(self):
-        """析构时退出登录"""
-        bs.logout()
+        """析构时退出登录 (增加异常捕获以防止 Python 关闭时的报错)"""
+        try:
+            # 在 Python 关闭过程中，bs 模块或内部依赖可能已被回收
+            # 捕获 AttributeError, ImportError 等常见关闭错误
+            if bs:
+                bs.logout()
+        except (AttributeError, ImportError, TypeError):
+            pass
+        except Exception as e:
+            # 其他未知错误可以打印，但在关闭时通常不需要
+            pass
 
     def get_stock_list(self) -> pd.DataFrame:
         """

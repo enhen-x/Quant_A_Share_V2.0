@@ -32,6 +32,9 @@ Quant_A_SHARE_V2.0/
 │   ├── index/                  # 指数行情
 │   └── meta/                   # 股票列表 & 交易日历
 │
+├── figures/                    # [新增] EDA 生成的可视化图表 (.png)
+├── reports/                    # [新增] EDA 生成的数据报告 (.csv)
+│
 ├── scripts/                    # 命令行脚本
 │   ├── update_data.py          # 更新 raw 数据
 │   ├── build_index.py
@@ -133,6 +136,39 @@ python scripts/clean_and_check.py
 - 清洗后数据：保存至 data/raw_cleaned/{symbol}.parquet。
 - 质量报告：生成 data/data_quality_report.csv，建议查看并剔除缺失率过高的股票。
 
+
+#### 2.5 数据探索性分析 (EDA) [新增]
+
+在清洗完成后，强烈建议运行 EDA 模块，分析数据的分布特征、停牌情况和动量效应，以便为特征工程提供依据。
+
+```bash
+# 默认模式：随机采样 200 只股票进行分析
+python scripts/run_eda.py
+
+# 自定义模式：采样 500 只股票
+python scripts/run_eda.py --sample 500
+```
+
+输出产物：
+
+**可视化图表 (figures/)：**
+
+- check_alignment.png: 检查个股与指数走势是否对齐（验证数据源质量）。
+
+- dist_returns.png: 日收益率分布图（辅助确定 Label 阈值）。
+
+- dist_suspension.png: 个股停牌率分布（识别垃圾股）。
+
+- dist_autocorr.png: 收益率自相关性分布（判断动量/反转特征）。
+
+- dist_liquidity.png: 流动性/换手率分布。
+
+**数据报告 (reports/eda/)：**
+
+- otential_anomalies.csv: 疑似未复权或异常波动的股票列表。
+
+- return_distribution_stats.csv: 收益率分位数统计。
+
 ### 💡 总结：接下来的操作
 
 你现在可以按照这个逻辑顺序执行一次全流程，验证整个数据链路是否通畅：
@@ -225,15 +261,11 @@ data/dataset_quality_report.csv
 
 🧪 当前已完成的能力（项目进展）
 - √ 全市场 A 股数据下载与更新
-- √ 自动构建价格矩阵（price_matrix.parquet）
+- √ 自动构建价格矩阵
 - √ 清洗与质量检查
+- √ **数据探索性分析 (EDA) 与可视化** <-- 新增这一项
 - √ 特征工程 + 标签生成
-- √ 多只股票合并训练
-- √ 自动化 XGBoost 训练与推理
-- √ 回测框架（已跑通）
-- √ 多样化回测（正在完善）
-- √ 结果可视化（正在开发）
-这一套已经接近业内量化团队的工程化标准，可以继续在此基础上扩展深度学习和 RL 模块。
+- ...
 
 
 📌 Roadmap（下一步计划）

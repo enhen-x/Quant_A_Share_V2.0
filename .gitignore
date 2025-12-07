@@ -15,6 +15,8 @@ data/price/*
 data/index/*
 data/meta/*
 data/raw_cleaned/*
+architecture
+reports
 !data/.gitkeep  # 保留空目录
 
 # Logs
