@@ -69,12 +69,12 @@ Quant_A_SHARE_V2.0/
 │   ├── check_features.py       # [Analysis] 因子有效性检查 (IC 分析/多重共线性/未来函数检测)
 │   ├── check_time_horizon.py   # [Analysis] 最佳持仓周期分析 (IC Decay)
 │   ├── run_walkforward.py      # [Step 4 - New] 滚动训练 (Walk-Forward Validation)
-│                               # 模拟真实时间流逝，每年重新训练模型，生成无未来函数的预测集。
+│   │                           # 模拟真实时间流逝，每年重新训练模型，生成无未来函数的预测集。
 │   ├── train_model.py          # [Step 4 - Legacy] 单次模型训练 (仅用于快速测试)
 │   ├── run_backtest.py         # [Step 5] 策略回测
-│                               # 支持分仓轮动(Periodic)、动态仓位、严谨成交(剔除涨停/高开)。
+│   │                           # 支持分仓轮动(Periodic)、动态仓位、严谨成交(剔除涨停/高开)。
 │   ├── check_stress_test.py    # [Test - New] 策略压力测试
-│                               # 测试策略在不同交易成本及历史极端熊市(如2024微盘股危机)下的生存能力。
+│   │                           # 测试策略在不同交易成本及历史极端熊市(如2024微盘股危机)下的生存能力。
 │   └── run_recommendation.py   # [App] 每日推荐 (Daily Picks)
 │                               # 智能寻找最新模型，生成含备选的 Top-K 股票池，自动过滤今日涨停股。
 │
