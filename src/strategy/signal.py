@@ -10,106 +10,134 @@ from src.utils.io import read_parquet
 logger = get_logger()
 
 class TopKSignalStrategy:
-    def __init__(self):
+    # ======================================================================
+    # 修改点 1: __init__ 增加 top_k=None 参数
+    # ======================================================================
+    def __init__(self, top_k=None):
         self.conf = GLOBAL_CONFIG["strategy"]
-        self.top_k = self.conf.get("top_k", 10)
+        
+        # 逻辑：优先使用传入的 top_k (推荐模式)，否则读取配置 (回测模式)
+        if top_k is not None:
+            self.top_k = top_k
+        else:
+            self.top_k = self.conf.get("top_k", 5)
+            
         self.min_score = self.conf.get("min_pred", 0.0)
         
-        # === 读取配置 (兼容旧命名) ===
+        # 仓位管理配置
+        self.pos_cfg = self.conf.get("position_control", {})
+        
+        # 读取过滤配置
         filter_cfg = GLOBAL_CONFIG.get("preprocessing", {}).get("filter", {})
-        
-        # 1. 价格 (Price)
-        self.min_price = filter_cfg.get("min_price", 0.0)      # 新增
-        self.max_price = filter_cfg.get("max_price", 99999.0)  # 保留
-        
-        # 2. 成交额 (Amount) - 【关键兼容】
-        # 使用旧名字 min_turnover 代表成交额
+        self.min_price = filter_cfg.get("min_price", 0.0)      
+        self.max_price = filter_cfg.get("max_price", 99999.0)  
         self.min_amount = filter_cfg.get("min_turnover", 0) 
-        
-        # 3. 换手率 (Turnover Rate) - 【新增明确命名】
         self.min_turnover_rate = filter_cfg.get("min_turnover_rate", 0.0)
-        
-        # 4. 市值 (Market Cap) - 动态计算
         self.min_mcap = filter_cfg.get("min_mcap", 0)
         self.max_mcap = filter_cfg.get("max_mcap", float("inf"))
-
-        # 5. 其他
         self.exclude_st = filter_cfg.get("exclude_st", True)
-        
         self.paths = GLOBAL_CONFIG["paths"]
-        
-        logger.info(f"策略风控参数 | 价格: {self.min_price}~{self.max_price}, "
-                    f"换手率>={self.min_turnover_rate}%, 成交额>={self.min_amount}")
-        logger.info(f"市值限制: {self.min_mcap/1e8}亿 ~ {self.max_mcap/1e8}亿")
 
     def _load_filter_data(self):
-        """加载辅助数据: amount, turnover, close"""
+        """加载辅助数据: amount, turnover, close, pct_chg"""
         stock_path = os.path.join(self.paths["data_processed"], "all_stocks.parquet")
         if not os.path.exists(stock_path):
-            logger.error("缺少 all_stocks.parquet，无法进行风控过滤！")
+            logger.error("缺少 all_stocks.parquet")
             return None, None
             
         df_stocks = read_parquet(stock_path)
-        # 确保包含计算市值所需的列
-        cols = ["date", "symbol", "turnover", "amount", "close"]
-        df_stocks = df_stocks[[c for c in cols if c in df_stocks.columns]]
         
-        meta_path = os.path.join(self.paths["data_meta"], "all_stocks_meta.parquet")
-        if os.path.exists(meta_path):
-            df_meta = read_parquet(meta_path)[["symbol", "name"]]
-        else:
-            df_meta = pd.DataFrame(columns=["symbol", "name"])
+        # 兼容列名
+        if "turnover" not in df_stocks.columns and "turn" in df_stocks.columns:
+            df_stocks = df_stocks.rename(columns={"turn": "turnover"})
             
-        return df_stocks, df_meta
+        # 必须加载 pct_chg (涨跌幅) 用于判断今日是否涨停
+        if "pct_chg" not in df_stocks.columns:
+            df_stocks = df_stocks.sort_values(["symbol", "date"])
+            df_stocks["pct_chg"] = df_stocks.groupby("symbol")["close"].pct_change()
+            
+        # 加载列
+        cols = ["date", "symbol", "turnover", "amount", "close", "pct_chg"] 
+        existing_cols = [c for c in cols if c in df_stocks.columns]
+        
+        return df_stocks[existing_cols], None
+
+    def _calc_position_ratio(self, dates: pd.Series) -> pd.DataFrame:
+        """根据大盘指数计算每日建议仓位 (双均线策略)"""
+        unique_dates = sorted(dates.unique())
+        pos_df = pd.DataFrame({"date": unique_dates, "pos_ratio": 1.0})
+
+        if not self.pos_cfg.get("enable", False):
+            return pos_df
+
+        index_code = self.pos_cfg.get("index_code", "000300.SH")
+        idx_file = f"index_{index_code.replace('.', '')}.parquet"
+        idx_path = os.path.join(self.paths["data_raw"], idx_file)
+        
+        if not os.path.exists(idx_path):
+            return pos_df
+
+        df_idx = read_parquet(idx_path)
+        df_idx["date"] = pd.to_datetime(df_idx["date"])
+        df_idx = df_idx.sort_values("date").set_index("date")
+        
+        fast_w = self.pos_cfg.get("fast_ma", 20)
+        slow_w = self.pos_cfg.get("slow_ma", 60)
+        ratios = self.pos_cfg.get("ratios", [1.0, 0.5, 0.0])
+        
+        df_idx["ma_fast"] = df_idx["close"].rolling(window=fast_w).mean()
+        df_idx["ma_slow"] = df_idx["close"].rolling(window=slow_w).mean()
+        
+        conditions = [
+            (df_idx["close"] > df_idx["ma_fast"]),
+            (df_idx["close"] <= df_idx["ma_fast"]) & (df_idx["close"] > df_idx["ma_slow"]),
+            (df_idx["close"] <= df_idx["ma_slow"])
+        ]
+        
+        df_idx["target_pos"] = np.select(conditions, ratios, default=0.0)
+        
+        df_ratio = df_idx[["target_pos"]].reset_index().rename(columns={"target_pos": "pos_ratio"})
+        pos_df = pd.merge(pos_df[["date"]], df_ratio, on="date", how="left")
+        pos_df["pos_ratio"] = pos_df["pos_ratio"].ffill().fillna(1.0)
+        
+        return pos_df
 
     def generate(self, pred_df: pd.DataFrame) -> pd.DataFrame:
-        logger.info(f"正在生成信号 (应用兼容性配置)...")
         initial_count = len(pred_df)
         
-        df_stocks, df_meta = self._load_filter_data()
+        df_stocks, _ = self._load_filter_data()
         
         # 合并行情
         if df_stocks is not None:
             pred_df = pd.merge(pred_df, df_stocks, on=["date", "symbol"], how="inner", suffixes=("", "_raw"))
-            
-        # 合并元数据
-        if not df_meta.empty:
-            pred_df = pd.merge(pred_df, df_meta, on="symbol", how="left")
 
         # ==========================
         # 执行过滤 (Filter)
         # ==========================
         
-        # 1. 价格区间 (min_price & max_price)
+        # 1. 价格区间
         close_col = "close_raw" if "close_raw" in pred_df.columns else "close"
         if close_col in pred_df.columns:
-            pred_df = pred_df[
-                (pred_df[close_col] >= self.min_price) & 
-                (pred_df[close_col] <= self.max_price)
-            ]
+            pred_df = pred_df[(pred_df[close_col] >= self.min_price) & (pred_df[close_col] <= self.max_price)]
 
-        # 2. 换手率 (min_turnover_rate) -> 对应列 turnover
+        # 2. 换手率
         if "turnover" in pred_df.columns and self.min_turnover_rate > 0:
             pred_df["turnover"] = pred_df["turnover"].fillna(0)
             pred_df = pred_df[pred_df["turnover"] >= self.min_turnover_rate]
             
-        # 3. 成交额 (min_turnover 配置) -> 对应列 amount
+        # 3. 成交额
         if "amount" in pred_df.columns and self.min_amount > 0:
             pred_df["amount"] = pred_df["amount"].fillna(0)
             pred_df = pred_df[pred_df["amount"] >= self.min_amount]
 
-        # 4. 市值过滤 (min_mcap & max_mcap) - 动态估算
-        # 逻辑：市值 = 成交额 / (换手率%)
+        # 4. 市值过滤
         if "amount" in pred_df.columns and "turnover" in pred_df.columns:
-            # 避免除以 0
-            valid_mcap_mask = pred_df["turnover"] > 0.001
-            # 计算临时市值列
-            pred_df.loc[valid_mcap_mask, "est_mcap"] = (
-                pred_df.loc[valid_mcap_mask, "amount"] / 
-                (pred_df.loc[valid_mcap_mask, "turnover"] * 0.01)
+            valid_mask = pred_df["turnover"] > 0.001
+            pred_df.loc[valid_mask, "est_mcap"] = (
+                pred_df.loc[valid_mask, "amount"] / (pred_df.loc[valid_mask, "turnover"] * 0.01)
             )
+            pred_df["est_mcap"] = pred_df["est_mcap"].fillna(0)
             
-            # 应用过滤
             if self.min_mcap > 0:
                 pred_df = pred_df[pred_df["est_mcap"] >= self.min_mcap]
             if self.max_mcap < float("inf"):
@@ -124,28 +152,37 @@ class TopKSignalStrategy:
         if not pool_cfg.get("include_bj", False):
             pred_df = pred_df[~pred_df["symbol"].str.match(r"^(8|4|92)")]
 
-        # 6. ST 过滤
-        if self.exclude_st and "name" in pred_df.columns:
-            mask_st = pred_df["name"].str.contains("ST", na=False) | pred_df["name"].str.contains("退", na=False)
-            pred_df = pred_df[~mask_st]
+        # 6. 今日涨停过滤 (新增)
+        if "pct_chg" in pred_df.columns:
+            limit_up_mask = pred_df["pct_chg"] > 0.095
+            if limit_up_mask.sum() > 0:
+                pred_df = pred_df[~limit_up_mask]
 
         # 7. 最低分数
         if self.min_score > -999:
             pred_df = pred_df[pred_df["pred_score"] >= self.min_score]
 
         filtered_count = len(pred_df)
-        drop_rate = 1 - filtered_count/initial_count if initial_count > 0 else 0
-        logger.info(f"过滤后剩余: {filtered_count} (剔除率 {drop_rate:.1%})")
-
         if filtered_count == 0:
             return pd.DataFrame(columns=["date", "symbol", "weight"])
 
         # ==========================
-        # 排序选股
+        # 排序选股 & 仓位控制
         # ==========================
         sorted_df = pred_df.sort_values(by=["date", "pred_score"], ascending=[True, False])
+        
+        # 这里使用 self.top_k，它现在可以是 10 了
         top_picks = sorted_df.groupby("date").head(self.top_k).copy()
-        top_picks["weight"] = 1.0 / self.top_k
+        
+        # 基础权重
+        top_picks["base_weight"] = 1.0 / self.top_k
+        
+        # 动态仓位系数
+        pos_df = self._calc_position_ratio(top_picks["date"])
+        top_picks = pd.merge(top_picks, pos_df, on="date", how="left")
+        
+        # 最终权重
+        top_picks["weight"] = top_picks["base_weight"] * top_picks["pos_ratio"]
         
         signal_df = top_picks[["date", "symbol", "weight"]].copy()
         return signal_df.sort_values(["date", "symbol"]).reset_index(drop=True)

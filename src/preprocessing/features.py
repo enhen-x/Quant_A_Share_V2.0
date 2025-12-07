@@ -50,6 +50,14 @@ class FeatureGenerator:
         if self.cfg.get("enable_volume", True):
             df = self._add_volume_features(df)
 
+        # [新增] 将市值作为特征
+        # 注意：需要保证 upstream 传进来的 df 有 amount 和 turnover
+        if "amount" in df.columns and "turnover" in df.columns:
+            # 简单估算市值 (Amount / Turnover%)
+            mcap = df["amount"] / (df["turnover"].replace(0, np.nan) * 0.01)
+            # 对市值取 Log，使其分布更均匀
+            df["feat_mcap_log"] = np.log1p(mcap)
+
         return df
 
     def _add_basic_features(self, df):
@@ -133,5 +141,7 @@ class FeatureGenerator:
             # 换手率通常已经是百分比，除以 100 归一化或者保持原样
             # 这里做 Log 处理使其分布更正态
             df["feat_turnover_log"] = np.log1p(df["turnover"])
+
+    
             
         return df

@@ -72,10 +72,10 @@ preprocessing:
     min_volume: 300000         # (旧) 最低成交量
 
     # --- 3. 流动性/换手率 (新增) ---
-    min_turnover_rate: 1.0     # (新) 日均换手率下限 (单位 %，对应真正的 Turnover Rate)
+    min_turnover_rate: 0.5     # (新) 日均换手率下限 (单位 %，对应真正的 Turnover Rate)
 
     # --- 4. 市值限制 (截图中的配置) ---
-    min_mcap: 2000000000       # (旧) 最小流通市值 (20亿)
+    min_mcap: 7000000000       # (旧) 最小流通市值 (70亿)
     max_mcap: 500000000000     # (旧) 最大流通市值 (5000亿)
 
     # --- 5. 其他 ---
@@ -107,7 +107,7 @@ preprocessing:
   labels:
     target_type: "regression"
     return_mode: "excess_index" # 收益模式
-    horizon: 5
+    horizon: 10
 
     # === 新增：标签生成方法 ===
     # 可选: "fixed_time" (原版固定周期) / "triple_barrier" (三相屏障)
@@ -152,7 +152,7 @@ model:
   label_col: "label"
   
   # 数据集划分
-  train_val_split_date: "2018-12-31"
+  train_val_split_date: "2023-01-01"
   train_ratio: 0.8
 
   # XGBoost 参数
@@ -165,14 +165,44 @@ model:
     tree_method: "hist"
 
 
+  # === 新增：滚动训练配置 (Walk-Forward) ===
+  walk_forward:
+    enable: true
+    start_year: 2019         # [关键] 哪一年开始产生预测？(即 2019之前的都是初始训练集)
+    train_window_type: "rolling" # "expanding" (扩张: 2010~T) 或 "rolling" (滚动: T-N~T)
+    rolling_window_size: 5   # 仅当 rolling 时生效，训练窗口长度(年)
+    update_freq: "yearly"    # 更新频率 (目前支持按年)
+
+
 # ==============================================================================
 # 5. 策略配置 (Strategy)
 
 # ==============================================================================
 strategy:
   mode: "long_topk"
-  top_k: 5
+  top_k: 10
   min_pred: -999
+  recommend_top_k: 10
+  # === 新增：换仓模式配置 ===
+  # "rolling":  滚动换仓 (默认)。每天换 1/N 仓位，资金曲线更平滑。
+  # "periodic": 定期换仓。每隔 N 天(horizon) 全部卖出换新，更符合手动操作习惯。
+  rebalance_mode: "periodic"
+
+
+  # === [升级] 动态仓位管理 ===
+  # 逻辑：
+  # 1. 价格 > MA20: 强趋势 -> 100% 仓位
+  # 2. MA60 < 价格 <= MA20: 震荡/回调 -> 50% 仓位
+  # 3. 价格 <= MA60: 熊市 -> 0% 仓位 (空仓)
+  position_control:
+    enable: true
+    index_code: "000300.SH"
+    fast_ma: 20    # 快线
+    slow_ma: 60    # 慢线
+    
+    # 对应的仓位比例 [强趋势, 震荡, 熊市]
+    # 你可以根据风险偏好调整，比如 [0.8, 0.4, 0.0]
+    ratios: [1.0, 0.5, 0.0]
 
 
 # ==============================================================================

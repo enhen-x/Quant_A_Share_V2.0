@@ -13,19 +13,24 @@ class XGBModelWrapper:
     def train(self, X_train, y_train, X_val=None, y_val=None):
         logger.info(f"初始化 XGBoost (Params: {self.params})")
         
-        # 转换为 DMatrix (XGBoost 专有格式，速度更快)
+        # 转换为 DMatrix
         dtrain = xgb.DMatrix(X_train, label=y_train)
         evals = []
         if X_val is not None:
             dval = xgb.DMatrix(X_val, label=y_val)
             evals = [(dtrain, 'train'), (dval, 'eval')]
+            
+        # 1. 拷贝一份参数，并移除 'n_estimators'
         train_params = self.params.copy()
-        train_params.pop('n_estimators', None)  # 移除 sklearn 风格参数
+        num_rounds = train_params.pop('n_estimators', 1000) # 取出并移除
+        
         # 开始训练
         self.model = xgb.train(
-            params=self.params,
+            # ================== 修改点 ==================
+            params=train_params,  # 这里要传处理过(移除n_estimators)的 train_params，而不是 self.params
+            # ===========================================
             dtrain=dtrain,
-            num_boost_round=self.params.get("n_estimators", 1000),
+            num_boost_round=num_rounds, # 使用刚才 pop 出来的值
             evals=evals,
             early_stopping_rounds=50,
             verbose_eval=100
