@@ -329,7 +329,7 @@ python scripts/check_time_horizon.py
 ### 内容来源说明：
 1.  **EDA 部分**：依据 `scripts/run_eda.py` 和 `docs/EDA_GUIDE.md`，涵盖了停牌率、流动性、对齐检查等功能。
 2.  **Factor Analysis 部分**：依据 `scripts/check_features.py` 和 `docs/FACTOR_ANALYSIS_REPORT.md`，涵盖了 IC 分析、未来函数检测和共线性检查。
-3.  **Horizon Analysis 部分**：依据 `scripts/check_time_horizon.py` 和 `docs/HORIZON_A
+3.  **Horizon Analysis 部分**：依据 `scripts/check_time_horizon.py` 和 `HORIZON_ANALYSIS_REPORT.md`
 
 ---
 # 5. 训练模型（支持多版本）

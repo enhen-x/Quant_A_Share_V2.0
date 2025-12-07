@@ -63,14 +63,27 @@ preprocessing:
 
   # 选股/过滤条件 (Filter Rules)
   filter:
-    max_price: 25              # 允许的最高股价
-    min_turnover: 10000000     # 日均成交额下限
-    min_volume: 300000         # 最低成交量
-    min_days_listed: 120       # 上市至少 120 天
+# --- 1. 价格限制 ---
+    max_price: 25              # (旧) 允许的最高股价
+    min_price: 4.0             # (新) 最低股价 (剔除低价垃圾股)
+
+    # --- 2. 成交量/额限制 (兼容旧命名) ---
+    min_turnover: 10000000     # (旧) 日均成交额下限 (这里保留旧名字，对应 Amount)
+    min_volume: 300000         # (旧) 最低成交量
+
+    # --- 3. 流动性/换手率 (新增) ---
+    min_turnover_rate: 1.0     # (新) 日均换手率下限 (单位 %，对应真正的 Turnover Rate)
+
+    # --- 4. 市值限制 (截图中的配置) ---
+    min_mcap: 2000000000       # (旧) 最小流通市值 (20亿)
+    max_mcap: 500000000000     # (旧) 最大流通市值 (5000亿)
+
+    # --- 5. 其他 ---
     exclude_st: true           # 排除 ST
     exclude_new: true          # 排除新股
-    min_mcap: 2000000000       # (2e9) 最小市值
-    max_mcap: 500000000000     # (5e11) 最大市值
+    min_days_listed: 60        # 上市至少多少天
+
+
 
   # 特征工程配置 (Feature Engineering)
   features:
