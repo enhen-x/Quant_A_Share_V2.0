@@ -73,9 +73,9 @@ pip install -r requirements.txt
 
 # 2. 数据获取与更新 (Data Pipeline)
 
-本项目采用了更稳定的分步下载策略，支持断点续传和自动挂机，配置位于 config/main.yaml。
+本项目采用了更稳定的分步下载策略，支持断点续传和自动挂机，配置位于 `config/main.yaml`。
 
-2.1 第一步：初始化股票池 
+#### 2.1 第一步：初始化股票池 
 
 首先获取全市场股票名单（代码、名称）及全历史交易日历，并保存为元数据。
 
@@ -84,8 +84,8 @@ pip install -r requirements.txt
 python scripts/init_stock_pool.py
 ```
 
-- 作用：从数据源拉取最新 A 股列表与交易日历，生成 `data/meta/all_stocks_meta.parquet、data\meta\trade_calendar.parquet`
-- 注意：这是后续下载的基础，首次运行或需要更新新股列表时必须执行。
+**作用**：从数据源拉取最新 A 股列表与交易日历，生成 `data/meta/all_stocks_meta.parquet、data\meta\trade_calendar.parquet`
+**注意**：这是后续下载的基础，首次运行或需要更新新股列表时必须执行。
 
 2.2 第二步：批量下载行情
 
@@ -99,12 +99,12 @@ python scripts/download_data.py
 python scripts/download_data.py --force
 ```
 
-- 数据源：目前默认使用 Baostock (可配置)。
-- 输出：数据将保存至 `data/raw/{symbol}.parquet`。
-- 过滤：下载前会自动应用 config/main.yaml 中 stock_pool 的过滤规则（如是否包含创业板、剔除 ST 等）。
+**数据源**：目前默认使用 Baostock (可配置)。
+**输出**：数据将保存至 `data/raw/{symbol}.parquet`。
+**过滤**：下载前会自动应用 `config/main.yaml` 中 `stock_pool` 的过滤规则（如是否包含创业板、剔除 ST 等）。
 
 
-2.3 （可选）全自动挂机下载
+#### 2.3 （可选）全自动挂机下载
 
 如果需要全量下载历史数据，且担心网络不稳定或接口风控，可以使用挂机脚本：
 
@@ -112,36 +112,36 @@ python scripts/download_data.py --force
 python scripts/auto_run.py
 ```
 
-- 功能：自动运行下载任务。
-- 机制：若遇到网络错误或反爬限制，脚本会自动休眠 5 分钟（300秒）等待 IP 冷却，然后自动重启继续下载，直到所有任务完成。
+**功能**：自动运行下载任务。
+**机制**：若遇到网络错误或反爬限制，脚本会自动休眠 5 分钟（300秒）等待 IP 冷却，然后自动重启继续下载，直到所有任务完成。
 
-2.4 数据清洗与质检 (Data Cleaning) [重要]
+#### 2.4 数据清洗与质检 (Data Cleaning) [重要]
 
 原始行情数据（Raw Data）可能包含重复行、价格异常（如 0 元）或隐性缺失。本步骤将执行标准化清洗，并生成质量报告。
 
 ```bash
 python scripts/clean_and_check.py
 ```
-输入：`data/raw/ (原始数据) + data/meta/trade_calendar.parquet` (本地交易日历)。
+**输入**：`data/raw/ (原始数据) + data/meta/trade_calendar.parquet` (本地交易日历)。
 
-配置：读取 `config/main.yaml` 中的 `preprocessing.quality` 参数。
+**配置**：读取 `config/main.yaml` 中的 `preprocessing.quality` 参数。
 
-处理逻辑：
+**处理逻辑**：
 
-1. 行级清洗：去重、剔除价格为 0 或 NaN 的异常行。
+ 1. 行级清洗：去重、剔除价格为 0 或 NaN 的异常行。
 
-2. 标的级筛选（自动剔除）：
+ 2. 标的级筛选（自动剔除）：
 
--  **高停牌率**：剔除历史停牌时间占比 > 10% 的股票（阈值可配）。
+- 高停牌率：剔除历史停牌时间占比 > 10% 的股票（阈值可配）。
 
-- **低流动性**：剔除日均换手率 < 1% 的“僵尸股”（阈值可配）。
+- 低流动性：剔除日均换手率 < 1% 的“僵尸股”（阈值可配）。
 
-- **严重缺失**：剔除数据缺失率过高的标的。
+- 严重缺失：剔除数据缺失率过高的标的。
 
-输出：
+**输出**：
 
-- 清洗后数据：保存至 `data/raw_cleaned/{symbol}.parquet`（仅包含状态为 OK 的股票）。
-- 质量报告：生成 `data/raw_cleaned/data_quality_report.csv`。请务必查看此报告，确认哪些股票被标记为 `REJECT` 及其原因（如 `HIGH_SUSPENSION` 或 `LOW_LIQUIDITY`）。
+1. 清洗后数据：保存至 `data/raw_cleaned/{symbol}.parquet`（仅包含状态为 OK 的股票）。
+2. 质量报告：生成 `data/raw_cleaned/data_quality_report.csv`。请务必查看此报告，确认哪些股票被标记为 `REJECT` 及其原因（如 `HIGH_SUSPENSION` 或 `LOW_LIQUIDITY`）。
 
 
 #### 2.5 数据探索性分析 (EDA) [新增]
@@ -156,9 +156,7 @@ python scripts/run_eda.py
 python scripts/run_eda.py --sample 500
 ```
 
-输出产物：
-
-**可视化图表 (figures/)：**
+**输出产物：可视化图表 (figures/)：**
 
 - `check_alignment.png`: 检查个股与指数走势是否对齐（验证数据源质量）。
 

@@ -20,10 +20,18 @@ class DataHub:
     def __init__(self):
         self.config = GLOBAL_CONFIG
         self.paths = self.config["paths"]
+        self._source = None  # 初始为 None
         
         # 默认使用 AkShare 作为数据源（因为 AkShare 对列表和日历支持更好）
         # 也可以根据配置切换
-        self.source = BaostockSource() 
+    @property
+    def source(self):
+        """懒加载：只有在真正需要联网下载时，才初始化 Source 并登录"""
+        if self._source is None:
+            # 这里才引用和实例化
+            from src.data_source.baostock_source import BaostockSource
+            self._source = BaostockSource()
+        return self._source
         # 如果需要 Baostock 的行情，可以在 fetch_price 里单独处理，或者在这里做更复杂的工厂模式
         
     # ==========================
@@ -94,3 +102,27 @@ class DataHub:
         import akshare as ak
         # ... (保留原有的 fetch_index_price 代码)
         return pd.DataFrame() # 占位
+    
+
+    # 5. 清洗后数据 (Cleaned Data) [新增]
+    # ==========================
+    def load_cleaned_price(self, symbol: str) -> Optional[pd.DataFrame]:
+        """读取清洗后的个股数据 (从 data/raw_cleaned)"""
+        # 注意：这里读取的是 config 中定义的 data_cleaned 路径
+        cleaned_dir = self.paths.get("data_cleaned", 
+                                   os.path.join(self.paths["data_root"], "raw_cleaned"))
+        path = os.path.join(cleaned_dir, f"{symbol}.parquet")
+        
+        if os.path.exists(path):
+            return read_parquet(path)
+        return None
+
+    def get_cleaned_stock_list(self) -> List[str]:
+        """获取所有已清洗的股票代码列表"""
+        cleaned_dir = self.paths.get("data_cleaned", 
+                                   os.path.join(self.paths["data_root"], "raw_cleaned"))
+        if not os.path.exists(cleaned_dir):
+            return []
+        
+        files = [f for f in os.listdir(cleaned_dir) if f.endswith(".parquet")]
+        return [f.replace(".parquet", "") for f in files]
