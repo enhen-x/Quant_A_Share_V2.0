@@ -84,7 +84,7 @@ pip install -r requirements.txt
 python scripts/init_stock_pool.py
 ```
 
-- 作用：从数据源拉取最新 A 股列表与交易日历，生成 data/meta/all_stocks_meta.parquet、data\meta\trade_calendar.parquet
+- 作用：从数据源拉取最新 A 股列表与交易日历，生成 `data/meta/all_stocks_meta.parquet、data\meta\trade_calendar.parquet`
 - 注意：这是后续下载的基础，首次运行或需要更新新股列表时必须执行。
 
 2.2 第二步：批量下载行情
@@ -100,7 +100,7 @@ python scripts/download_data.py --force
 ```
 
 - 数据源：目前默认使用 Baostock (可配置)。
-- 输出：数据将保存至 data/raw/{symbol}.parquet。
+- 输出：数据将保存至 `data/raw/{symbol}.parquet`。
 - 过滤：下载前会自动应用 config/main.yaml 中 stock_pool 的过滤规则（如是否包含创业板、剔除 ST 等）。
 
 
@@ -122,19 +122,26 @@ python scripts/auto_run.py
 ```bash
 python scripts/clean_and_check.py
 ```
-输入：data/raw/ (原始数据) + data/meta/trade_calendar.parquet (本地交易日历)。
+输入：`data/raw/ (原始数据) + data/meta/trade_calendar.parquet` (本地交易日历)。
+
+配置：读取 `config/main.yaml` 中的 `preprocessing.quality` 参数。
 
 处理逻辑：
 
-去重：按日期去重，保留最新记录。
+1. 行级清洗：去重、剔除价格为 0 或 NaN 的异常行。
 
-- 异常剔除：剔除价格为 0 或 NaN 的脏数据。
-- 质检：统计停牌率（Suspension Ratio）和 相对于交易日历的缺失率（Missing Ratio）。
+2. 标的级筛选（自动剔除）：
+
+-  **高停牌率**：剔除历史停牌时间占比 > 10% 的股票（阈值可配）。
+
+- **低流动性**：剔除日均换手率 < 1% 的“僵尸股”（阈值可配）。
+
+- **严重缺失**：剔除数据缺失率过高的标的。
 
 输出：
 
-- 清洗后数据：保存至 data/raw_cleaned/{symbol}.parquet。
-- 质量报告：生成 data/data_quality_report.csv，建议查看并剔除缺失率过高的股票。
+- 清洗后数据：保存至 `data/raw_cleaned/{symbol}.parquet`（仅包含状态为 OK 的股票）。
+- 质量报告：生成 `data/raw_cleaned/data_quality_report.csv`。请务必查看此报告，确认哪些股票被标记为 `REJECT` 及其原因（如 `HIGH_SUSPENSION` 或 `LOW_LIQUIDITY`）。
 
 
 #### 2.5 数据探索性分析 (EDA) [新增]
@@ -153,21 +160,21 @@ python scripts/run_eda.py --sample 500
 
 **可视化图表 (figures/)：**
 
-- check_alignment.png: 检查个股与指数走势是否对齐（验证数据源质量）。
+- `check_alignment.png`: 检查个股与指数走势是否对齐（验证数据源质量）。
 
-- dist_returns.png: 日收益率分布图（辅助确定 Label 阈值）。
+- `dist_returns.png`: 日收益率分布图（辅助确定 Label 阈值）。
 
-- dist_suspension.png: 个股停牌率分布（识别垃圾股）。
+- `dist_suspension.png`: 个股停牌率分布（识别垃圾股）。
 
-- dist_autocorr.png: 收益率自相关性分布（判断动量/反转特征）。
+- `dist_autocorr.png`: 收益率自相关性分布（判断动量/反转特征）。
 
-- dist_liquidity.png: 流动性/换手率分布。
+- `dist_liquidity.png`: 流动性/换手率分布。
 
 **数据报告 (reports/eda/)：**
 
-- otential_anomalies.csv: 疑似未复权或异常波动的股票列表。
+- `otential_anomalies.csv`: 疑似未复权或异常波动的股票列表。
 
-- return_distribution_stats.csv: 收益率分位数统计。
+- `return_distribution_stats.csv`: 收益率分位数统计。
 
 ### 💡 总结：接下来的操作
 
@@ -175,7 +182,7 @@ python scripts/run_eda.py --sample 500
 
 1.  `python scripts/init_stock_pool.py` (获取列表+日历)
 2.  `python scripts/download_data.py` (下载原始数据)
-3.  **`python scripts/clean_and_check.py` (清洗数据 -> 生成 raw_cleaned)**
+3.  `python scripts/clean_and_check.py` (清洗数据 -> 生成 raw_cleaned)
 4.  `python scripts/rebuild_features.py` (读取 raw_cleaned -> 生成 features)
 
 这样你的量化系统就拥有了一个坚实、干净的数据基础。
