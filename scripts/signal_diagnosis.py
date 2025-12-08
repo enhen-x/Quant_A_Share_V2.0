@@ -1,3 +1,5 @@
+# scripts/signal_diagnosis.py
+
 import os
 import pandas as pd
 import numpy as np
@@ -15,6 +17,22 @@ from src.utils.io import read_parquet, ensure_dir
 from src.strategy.signal import TopKSignalStrategy
 from src.backtest.backtester import VectorBacktester
 
+# ==============================================================================
+# 模块级绘图配置 (强制覆盖默认设置) - 确保在任何 plt.figure() 调用之前运行
+# ==============================================================================
+try:
+    # 1. 设置样式 (如果样式冲突，可以尝试注释掉这一行，以验证冲突是否是根源)
+    plt.style.use('ggplot')
+except:
+    pass
+
+# 2. 确保中文字体可用，并包含一个兼容性强的字体
+plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'sans-serif']
+# 3. 强制使用标准的 ASCII 减号 ('-') 代替 Unicode 减号 ('\u2212')，解决警告
+plt.rcParams['axes.unicode_minus'] = False 
+plt.rcParams['figure.figsize'] = (12, 6)
+# ==============================================================================
+
 class SignalDiagnosis:
     def __init__(self):
         self.config = GLOBAL_CONFIG
@@ -25,14 +43,10 @@ class SignalDiagnosis:
         self.report_path = os.path.join(self.output_dir, "diagnosis_summary.md")
         ensure_dir(self.output_dir)
         ensure_dir(self.figure_dir)
-        self._setup_plotting()
+        # 注意：此处已删除 self._setup_plotting() 的调用
         self.report_lines = []
 
-    def _setup_plotting(self):
-        plt.style.use('ggplot')
-        plt.rcParams['axes.unicode_minus'] = False 
-        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'sans-serif']
-        plt.rcParams['figure.figsize'] = (12, 6)
+    # ！！！已移除原有的 _setup_plotting 方法 ！！！
 
     def load_data(self):
         model_dir = os.path.join(self.paths["models"])
@@ -133,13 +147,16 @@ class SignalDiagnosis:
         for i in range(1, len(dates)):
             prev = set(signal_by_date[dates[i - 1]])
             curr = set(signal_by_date[dates[i]])
+            # 计算换手率：(调仓数) / (当前持仓数) = (新增 + 卖出) / (持仓)
+            # 简化为： 1 - (不变持仓数) / (新持仓数)
             turnover = 1 - len(prev & curr) / len(curr)
             turnover_rates.append(turnover)
         avg_turnover = np.mean(turnover_rates)
         self.log(f"- 平均换仓率：{avg_turnover:.1%}")
 
         plt.figure()
-        plt.plot(dates[1:], turnover_rates)
+        # x 轴需要是日期对象
+        plt.plot(dates[1:], turnover_rates) 
         plt.title("换仓率变化曲线")
         plt.savefig(os.path.join(self.figure_dir, "turnover_rate.png"))
         plt.close()
@@ -164,7 +181,9 @@ class SignalDiagnosis:
         backtester = VectorBacktester()
         cost_rates = [0.001, 0.002, 0.003, 0.005]
         cost_results = []
+        # 注意：这里 run 方法会在内部调用 _plot_result，并再次创建 Figure，因此模块级配置至关重要
         for cost in cost_rates:
+            # 传递 output_dir 是为了让 backtester 知道把图表放在哪里
             result = backtester.run(self.signal_df, cost_rate=cost, output_dir=self.output_dir)
             cost_results.append([cost, result.get("annual_return", 0), result.get("sharpe", 0)])
         df_cost = pd.DataFrame(cost_results, columns=["Cost", "AnnualReturn", "Sharpe"])

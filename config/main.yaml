@@ -65,17 +65,17 @@ preprocessing:
   filter:
 # --- 1. 价格限制 ---
     max_price: 25              # (旧) 允许的最高股价
-    min_price: 4.0             # (新) 最低股价 (剔除低价垃圾股)
+    min_price: 5.0             # (新) 最低股价 (剔除低价垃圾股)
 
     # --- 2. 成交量/额限制 (兼容旧命名) ---
     min_turnover: 10000000     # (旧) 日均成交额下限 (这里保留旧名字，对应 Amount)
     min_volume: 300000         # (旧) 最低成交量
 
     # --- 3. 流动性/换手率 (新增) ---
-    min_turnover_rate: 0.5     # (新) 日均换手率下限 (单位 %，对应真正的 Turnover Rate)
+    min_turnover_rate: 1.0     # (新) 日均换手率下限 (单位 %，对应真正的 Turnover Rate)
 
     # --- 4. 市值限制 (截图中的配置) ---
-    min_mcap: 7000000000       # (旧) 最小流通市值 (70亿)
+    min_mcap: 10000000000       # (旧) 最小流通市值 (70亿)
     max_mcap: 500000000000     # (旧) 最大流通市值 (5000亿)
 
     # --- 5. 其他 ---
@@ -96,7 +96,7 @@ preprocessing:
     enable_volume: true
 
     # 特征参数
-    ma_windows: [5, 10, 20, 60]
+    ma_windows: [5, 10, 20, 60, 120]
     rsi_window: 14
     kdj_window: 9
     boll_window: 20
@@ -158,10 +158,10 @@ model:
   # XGBoost 参数
   params:
     n_estimators: 2000
-    max_depth: 8
+    max_depth: 6
     learning_rate: 0.03
-    subsample: 0.8
-    colsample_bytree: 0.9
+    subsample: 0.9
+    colsample_bytree: 0.95
     tree_method: "hist"
 
 
@@ -180,8 +180,8 @@ model:
 # ==============================================================================
 strategy:
   mode: "long_topk"
-  top_k: 10
-  min_pred: -999
+  top_k: 5
+  min_pred: 0.005
   recommend_top_k: 10
   # === 新增：换仓模式配置 ===
   # "rolling":  滚动换仓 (默认)。每天换 1/N 仓位，资金曲线更平滑。
@@ -198,7 +198,7 @@ strategy:
     enable: true
     index_code: "000300.SH"
     fast_ma: 20    # 快线
-    slow_ma: 60    # 慢线
+    slow_ma: 540    # 慢线
     
     # 对应的仓位比例 [强趋势, 震荡, 熊市]
     # 你可以根据风险偏好调整，比如 [0.8, 0.4, 0.0]

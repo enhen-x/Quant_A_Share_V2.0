@@ -175,6 +175,16 @@ class VectorBacktester:
         return {"annual_return": annual_ret, "sharpe": sharpe, "max_drawdown": max_dd}
 
     def _plot_result(self, equity, benchmark, metrics, out_dir, title_suffix=""):
+
+        # ====================================================================
+        # 【修复冲突点】在每次绘图前强制设置字体和减号，以应对外部样式覆盖
+        # ====================================================================
+        # 1. 设置中文字体列表，确保找到一个可用的中文字体
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'sans-serif']
+        # 2. 强制使用 ASCII 减号 ('-') 代替 Unicode 减号 ('\u2212')，解决警告
+        plt.rcParams['axes.unicode_minus'] = False 
+        # ====================================================================
+
         fig, axes = plt.subplots(2, 1, figsize=(12, 10))
         ax1 = axes[0]
         equity.plot(ax=ax1, label="Strategy", color="red", linewidth=2)
@@ -185,6 +195,7 @@ class VectorBacktester:
         ax1.grid(True, linestyle="--", alpha=0.5)
         
         ax2 = axes[1]
+
         equity.plot(ax=ax2, label="Strategy", color="red", linewidth=2)
         if benchmark is not None:
             benchmark.plot(ax=ax2, label="Benchmark", color="gray", linestyle="--", alpha=0.7)

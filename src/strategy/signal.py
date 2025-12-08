@@ -10,9 +10,7 @@ from src.utils.io import read_parquet
 logger = get_logger()
 
 class TopKSignalStrategy:
-    # ======================================================================
-    # 修改点 1: __init__ 增加 top_k=None 参数
-    # ======================================================================
+    
     def __init__(self, top_k=None):
         self.conf = GLOBAL_CONFIG["strategy"]
         
@@ -105,9 +103,23 @@ class TopKSignalStrategy:
     def generate(self, pred_df: pd.DataFrame) -> pd.DataFrame:
         initial_count = len(pred_df)
         
+        # === 1. 新增：计算 3 日平滑分数 (MA3) ===
+        SMOOTH_WINDOW = 3
+        # 确保数据按 symbol 和 date 排序，以便进行 rolling 计算
+        # pred_df 必须包含历史数据才能计算 rolling mean
+        pred_df = pred_df.sort_values(by=["symbol", "date"])
+        
+        # 计算 3 日得分均值
+        # min_periods=1 确保了数据开始的前两天也有得分，用于过滤
+        pred_df['score_smoothed'] = pred_df.groupby('symbol')['pred_score'].transform(
+            lambda x: x.rolling(window=SMOOTH_WINDOW, min_periods=1).mean()
+        )
+        # 确定用于排序和过滤的列名
+        sort_score_col = 'score_smoothed'
+        
         df_stocks, _ = self._load_filter_data()
         
-        # 合并行情
+        # 合并行情 (使用原始 pred_df 作为基础)
         if df_stocks is not None:
             pred_df = pd.merge(pred_df, df_stocks, on=["date", "symbol"], how="inner", suffixes=("", "_raw"))
 
@@ -158,9 +170,9 @@ class TopKSignalStrategy:
             if limit_up_mask.sum() > 0:
                 pred_df = pred_df[~limit_up_mask]
 
-        # 7. 最低分数
+        # 7. 最低分数 (使用平滑后的分数进行信心过滤)
         if self.min_score > -999:
-            pred_df = pred_df[pred_df["pred_score"] >= self.min_score]
+            pred_df = pred_df[pred_df[sort_score_col] >= self.min_score]
 
         filtered_count = len(pred_df)
         if filtered_count == 0:
@@ -169,9 +181,10 @@ class TopKSignalStrategy:
         # ==========================
         # 排序选股 & 仓位控制
         # ==========================
-        sorted_df = pred_df.sort_values(by=["date", "pred_score"], ascending=[True, False])
+        # 使用平滑得分进行排序
+        sorted_df = pred_df.sort_values(by=["date", sort_score_col], ascending=[True, False])
         
-        # 这里使用 self.top_k，它现在可以是 10 了
+        # 这里使用 self.top_k，它现在可以是 4
         top_picks = sorted_df.groupby("date").head(self.top_k).copy()
         
         # 基础权重
