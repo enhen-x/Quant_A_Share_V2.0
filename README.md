@@ -433,7 +433,7 @@ python scripts/run_backtest.py
 
 该脚本会自动寻找 `data/models/` 下最新的模型版本，加载其生成的预测分数 (`predictions.parquet`)，并执行以下核心流程：
 
-**7.1 核心机制**:
+**6.1 核心机制**:
 
 1. **策略信号生成** (`TopKSignalStrategy`)
 
@@ -455,7 +455,7 @@ python scripts/run_backtest.py
 
 - **成本估算**：内置交易成本扣除逻辑（默认双边滑点+佣金+印花税 ≈ 千分之 1.5），在分仓模式下按每日实际换手率计算扣费。
 
-**7.2 回测产物**
+**6.2 回测产物**
 回测结果将保存在 `data/models/{version}/backtest_result/` 目录下：
 
 - `equity_curve.png`：资金曲线图。
