@@ -77,26 +77,43 @@ def get_latest_model_path():
     return None, None
 
 def load_latest_data():
-    """加载特征数据，并提取出【最新一个交易日】的数据"""
+    """加载特征数据，并提取出【最近 N 个交易日】的数据，用于预测和平滑。"""
     data_path = os.path.join(GLOBAL_CONFIG["paths"]["data_processed"], "all_stocks.parquet")
     if not os.path.exists(data_path):
         logger.error(f"特征文件不存在: {data_path}，请先运行 rebuild_features.py")
-        return None, None
+        return None, None, None
 
     # 读取数据 (实盘可优化为只读最后的分区)
     df = read_parquet(data_path)
-    
-    # 获取数据中最新的日期
-    latest_date = df["date"].max()
-    logger.info(f"数据集中最新日期为: {latest_date}")
-    
-    # 筛选出最新这一天的数据
-    df_latest = df[df["date"] == latest_date].copy()
+    df["date"] = pd.to_datetime(df["date"])
     
     # 提取特征列 (feat_ 开头)
-    feat_cols = [c for c in df_latest.columns if c.startswith("feat_")]
+    feat_cols = [c for c in df.columns if c.startswith("feat_")]
     
-    return df_latest, feat_cols
+    # 获取最新的 N 个交易日的数据 (N=3, 与 signal.py 中的 SMOOTH_WINDOW 匹配)
+    N_DAYS = 3 
+    
+    # 1. 获取唯一的日期并排序
+    unique_dates = sorted(df["date"].unique(), reverse=True)
+    
+    if len(unique_dates) < N_DAYS:
+        logger.warning(f"总交易日 ({len(unique_dates)}) 少于平滑窗口 ({N_DAYS}天)，使用全部数据。")
+        target_dates = unique_dates
+    else:
+        # 取最近的 N 个交易日
+        target_dates = unique_dates[:N_DAYS]
+    
+    df_slice = df[df["date"].isin(target_dates)].copy()
+    
+    if df_slice.empty:
+        logger.error("数据切片为空，无法推荐。")
+        return None, None, None
+    
+    latest_date = unique_dates[0]
+    logger.info(f"数据集中最新日期为: {latest_date.strftime('%Y-%m-%d')}，将加载前 {len(target_dates)} 个交易日的数据。")
+
+    # 返回切片数据、特征列表、最新日期
+    return df_slice, feat_cols, latest_date
 
 def main():
     logger.info("=== 启动每日推荐系统 (Daily Recommendation) ===")
@@ -111,59 +128,66 @@ def main():
     model = XGBModelWrapper()
     model.load(model_path)
     
-    # 2. 加载最新行情数据
-    df_latest, feat_cols = load_latest_data()
-    if df_latest is None or df_latest.empty:
-        logger.error("今日无数据，无法推荐。")
+    # 2. 加载最新行情数据（最近 N 天）
+    df_slice, feat_cols, latest_date = load_latest_data()
+    if df_slice is None or df_slice.empty:
+        logger.error("无数据切片，无法推荐。")
         return
 
     # 3. 执行预测
-    logger.info(f"正在对 {len(df_latest)} 只股票进行打分...")
-    pred_scores = model.predict(df_latest[feat_cols])
+    logger.info(f"正在对 {len(df_slice)} 行数据 ({df_slice['symbol'].nunique()} 只股票) 进行打分...")
+    # 预测分数
+    pred_scores = model.predict(df_slice[feat_cols])
     
-    pred_df = df_latest[["date", "symbol"]].copy()
+    # 构造包含历史预测的 DataFrame (用于策略计算平滑分)
+    pred_df = df_slice[["date", "symbol"]].copy()
     pred_df["pred_score"] = pred_scores
     
     # =======================================================
     # 4. 策略筛选 (读取推荐专用 Top-K 配置)
     # =======================================================
     
-    # 优先读取 recommend_top_k，如果没有则回退到 top_k
     strat_cfg = GLOBAL_CONFIG["strategy"]
     rec_k = strat_cfg.get("recommend_top_k", strat_cfg.get("top_k", 5))
     
     logger.info(f"生成推荐列表长度: {rec_k} (含备选)")
     
     # 实例化策略时传入 top_k
-    # 注意：需确保 src/strategy/signal.py 的 __init__ 已支持 top_k 参数
     strategy = TopKSignalStrategy(top_k=rec_k)
+    
+    # **关键：传递包含历史数据的 pred_df，以便 strategy.generate 计算平滑得分**
     recommend_df = strategy.generate(pred_df)
     
+    # 筛选出最新的信号（即今天）
+    recommend_df_latest = recommend_df[recommend_df["date"] == latest_date].copy()
+    
     # 5. 输出结果
-    if recommend_df.empty:
+    if recommend_df_latest.empty:
         logger.warning("策略筛选后无股票入选 (可能都被风控剔除或分数不足)。")
         logger.info("Top 5 原始预测得分 (未经过滤):")
-        print(pred_df.sort_values("pred_score", ascending=False).head(5))
+        print(pred_df[pred_df["date"] == latest_date].sort_values("pred_score", ascending=False).head(5))
         return
 
     # 补充股票名称以便阅读
     meta_path = os.path.join(GLOBAL_CONFIG["paths"]["data_meta"], "all_stocks_meta.parquet")
     if os.path.exists(meta_path):
         df_meta = read_parquet(meta_path)
-        recommend_df = pd.merge(recommend_df, df_meta[["symbol", "name"]], on="symbol", how="left")
+        recommend_df_latest = pd.merge(recommend_df_latest, df_meta[["symbol", "name"]], on="symbol", how="left")
     
-    # 补充预测分
-    recommend_df = pd.merge(recommend_df, pred_df[["symbol", "pred_score"]], on="symbol", how="left")
+    # 补充原始预测分
+    recommend_df_latest = pd.merge(recommend_df_latest, 
+                                   pred_df[["date", "symbol", "pred_score"]], 
+                                   on=["date", "symbol"], how="left")
     
     # 格式化输出
     print("\n" + "="*60)
-    print(f"🌟 {df_latest['date'].iloc[0].strftime('%Y-%m-%d')} 每日精选推荐 (Top {len(recommend_df)}) 🌟")
+    print(f"🌟 {latest_date.strftime('%Y-%m-%d')} 每日精选推荐 (Top {len(recommend_df_latest)}) 🌟")
     print("="*60)
     
     cols = ["symbol", "name", "pred_score", "weight"]
-    print_cols = [c for c in cols if c in recommend_df.columns]
+    print_cols = [c for c in cols if c in recommend_df_latest.columns]
     
-    print_df = recommend_df[print_cols].sort_values("pred_score", ascending=False).reset_index(drop=True)
+    print_df = recommend_df_latest[print_cols].sort_values("pred_score", ascending=False).reset_index(drop=True)
     
     # 尝试使用 tabulate 美化输出
     try:
@@ -175,7 +199,8 @@ def main():
     out_dir = os.path.join(GLOBAL_CONFIG["paths"]["reports"], "daily_picks")
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    out_file = os.path.join(out_dir, f"picks_{version}_{df_latest['date'].iloc[0].strftime('%Y%m%d')}.csv")
+    # 使用 latest_date 作为文件名日期
+    out_file = os.path.join(out_dir, f"picks_{version}_{latest_date.strftime('%Y%m%d')}.csv")
     print_df.to_csv(out_file, index=False, encoding="utf-8-sig")
     print(f"\n[文件] 推荐列表已保存至: {out_file}")
     print("="*60)
