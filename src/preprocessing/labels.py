@@ -93,19 +93,35 @@ class LabelGenerator:
         return df
 
     def _calc_fixed_time(self, df: pd.DataFrame, price_base: pd.Series) -> pd.DataFrame:
-        """原版：固定时间窗口收益"""
-        # Entry: T+1, Exit: T+1+Horizon
-        entry_price = price_base.shift(-1)
-        exit_price = price_base.shift(-(1 + self.horizon))
+        """原版：固定时间窗口收益（增加了平滑逻辑）"""
         
-        # 绝对收益
+        # 1. 获取平滑窗口参数 (默认 1，即不平滑)
+        window = self.cfg.get("smooth_window", 1)
+        
+        # 2. 计算退出价格 (Exit Price)
+        if window > 1:
+            # 核心修改点：
+            # rolling(window, center=True) 会取当前点及前后的数据平均
+            # 例如 window=3, center=True，对于 T+5 这一天，它计算的是 Avg(T+4, T+5, T+6)
+            # min_periods=1 保证边缘数据也能计算
+            smoothed_price = price_base.rolling(window=window, center=True, min_periods=1).mean()
+            
+            # 将平滑后的价格序列向未来移动 horizon 天
+            exit_price = smoothed_price.shift(-(1 + self.horizon))
+        else:
+            # 原逻辑
+            exit_price = price_base.shift(-(1 + self.horizon))
+        
+        # Entry 保持不变 (T+1 入场)
+        entry_price = price_base.shift(-1)
+        
+        # 3. 计算收益率
         raw_ret = (exit_price / entry_price) - 1.0
         
-        # 转换为 Label
+        # ... (后续代码保持不变)
         label_col = f"label_{self.horizon}d"
         df[label_col] = raw_ret
         
-        # 如果需要超额收益
         if self.return_mode == "excess_index" and self.df_index is not None:
             idx_ret = self._get_index_return(df, days=self.horizon)
             df[label_col] = df[label_col] - idx_ret

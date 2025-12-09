@@ -112,7 +112,9 @@ class VectorBacktester:
             if date not in date_to_idx: continue
             start_idx = date_to_idx[date]
             
-            indices = [start_idx + i for i in range(0, self.holding_period)]
+
+
+            indices = [start_idx + 1 +i for i in range(0, self.holding_period)]
             valid_indices = [i for i in indices if i < len(all_dates)]
             if not valid_indices: continue
             

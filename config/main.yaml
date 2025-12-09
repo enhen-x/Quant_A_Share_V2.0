@@ -108,6 +108,10 @@ preprocessing:
     target_type: "regression"
     return_mode: "excess_index" # 收益模式
     horizon: 10
+    # 标签平滑窗口
+    # 设为 3 意味着取 [T-1, T, T+1] 三天的均值作为退出价格
+    # 设为 1 则不平滑（原逻辑）
+    smooth_window: 3
 
     # === 新增：标签生成方法 ===
     # 可选: "fixed_time" (原版固定周期) / "triple_barrier" (三相屏障)
