@@ -353,7 +353,7 @@ python scripts/rebuild_features.py
 python scripts/run_eda.py
 ```
 
-* **核心检查点：**
+* **核心检查点(与原始数据eda分析保持一致)：**
 
  * **数据完整性**：检查个股停牌率分布，识别长期停牌的垃圾股。
 
@@ -378,11 +378,26 @@ python scripts/check_features.py
 
  * **IC 分析 (Information Coefficient)**：计算每个特征与未来收益的相关系数 (RankIC)，判断因子是否有效。
 
+ <p align="center">
+  <h3 align="center">IC 分析 (Information Coefficient)</h3>
+  <img src="architecture\test_result\factors\20251208_012005\feature_ic_top30.png" width="600" alt="IC 分析 (Information Coefficient)">
+ </p>
+
  * **未来函数检测**：如果某因子 IC > 0.8，脚本会发出警告，提示可能存在未来数据泄露。
 
  * **多重共线性**：生成相关性热力图，辅助剔除高度冗余的特征。
 
+ <p align="center">
+  <h3 align="center">多重共线性分析</h3>
+  <img src="architecture\test_result\factors\20251208_012005\feature_correlation.png" width="600" alt="多重共线性分析">
+ </p>
+
  * **标签分布**：检查训练目标（Label）是否符合正态分布，是否需要对数变换。
+
+  <p align="center">
+  <h3 align="center">标签分布分析</h3>
+  <img src="architecture\test_result\factors\20251208_012005\dist_label.png" width="600" alt="标签分布分析">
+ </p>
 
 * 📘 **详细指南**：请阅读 `docs/FACTOR_ANALYSIS_REPORT.md`。
 
@@ -400,6 +415,11 @@ python scripts/check_time_horizon.py
 
  * **IC 衰减曲线 (Decay Curve)**：绘制 Top 因子在 1d, 3d, 5d, 10d, 20d 不同预测周期下的表现。
 
+ <p align="center">
+  <h3 align="center">IC 衰减曲线 (Decay Curve)</h3>
+  <img src="architecture\test_result\horizon_analysis\20251208_012101\ic_decay_curve.png" width="600" alt="IC 衰减曲线 (Decay Curve)">
+ </p>
+
  * **最佳周期判定**：
 
   * **快速衰减型**：适合做超短线（High Frequency）。
@@ -411,7 +431,7 @@ python scripts/check_time_horizon.py
 📊 **产出物位置**： 所有分析生成的**可视化图表**均保存在 `figures/` 目录下（按时间戳归档）,**统计数据表**保存在 `reports/` 目录下。
 
 
-### 4.4 策略信号诊断 (Signal Diagnosis) [新增]
+### 4.4 策略信号诊断 (Signal Diagnosis)
 
 用于评估策略信号的**稳健性、成本敏感性**和**风险暴露**，对策略进行深度剖析
 
@@ -424,11 +444,51 @@ python scripts/signal_diagnosis.py
 **核心检查点：**
  * **风险暴露**：分析选股组合的**中位价格、换手率、历史波动率**及**动量**分布，识别是否存在潜在的风格风险.
 
+ <p align="center">
+  <h3 align="center">中位价格</h3>
+  <img src="architecture\test_result\signals\20251209_193138\price_distribution.png" width="600" alt="中位价格">
+ </p>
+
+ <p align="center">
+  <h3 align="center">换手率</h3>
+  <img src="architecture\test_result\signals\20251209_193138\turnover_rate.png" width="600" alt="换手率">
+ </p>
+
+ <p align="center">
+  <h3 align="center">历史波动率</h3>
+  <img src="architecture\test_result\signals\20251209_193138\volatility_distribution.png" width="600" alt="历史波动率">
+ </p>
+
+ <p align="center">
+  <h3 align="center">动量</h3>
+  <img src="architecture\test_result\signals\20251209_193138\momentum_1m_distribution.png" width="600" alt="动量">
+ </p>
+
  * **成本敏感性**：测试策略在不同交易成本（如 1‰, 2‰, 5‰）下的**夏普比率**衰减，评估策略的实战盈利空间.
+
+ <p align="center">
+  <h3 align="center">2‰交易成本下收益</h3>
+  <img src="architecture\test_result\stress_test\cost_20\equity_curve.png" width="600" alt="2‰交易成本下收益">
+ </p>
 
  * **危机压力测试**：在历史极端熊市（如 2018 年、2022 年、2024 年微盘股危机）时间窗口下运行回测，评估策略的**最大回撤**与生存能力.
 
+ <p align="center">
+  <h3 align="center">2022年熊市收益</h3>
+  <img src="architecture\test_result\stress_test\crisis_2022_Fed_Hike\equity_curve.png" width="600" alt="2022年熊市收益">
+ </p>
+
  * **信号质量**：分析**月度 IC 稳定性** (IC IR) 和**平均换仓率**，评估信号的长期有效性与稳定性.
+
+ <p align="center">
+  <h3 align="center">月度 IC 稳定性</h3>
+  <img src="architecture\test_result\signals\20251209_193138\ic_by_month.png" width="600" alt="月度 IC 稳定性">
+ </p>
+
+ <p align="center">
+  <h3 align="center">平均换仓率</h3>
+  <img src="architecture\test_result\signals\20251209_193138\turnover_distribution.png" width="600" alt="平均换仓率">
+ </p>
 
 📊 **产出物位置**： 所有分析生成的**可视化图表**均保存在 `figures/` 目录下（按时间戳归档）,**统计数据表**保存在 `reports/` 目录下.
 
@@ -511,6 +571,11 @@ python scripts/run_backtest.py
 回测结果将保存在 `data/models/{version}/backtest_result/` 目录下：
 
 - `equity_curve.png`：资金曲线图。
+ 
+ <p align="center">
+  <h3 align="center">资金曲线图</h3>
+  <img src="architecture\test_result\backtest_result\equity_curve.png" width="600" alt="资金曲线图">
+ </p>
 
  - **上图 (Linear)**：展示策略净值 vs 基准指数（沪深300）的线性走势。
 
