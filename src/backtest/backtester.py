@@ -136,13 +136,23 @@ class VectorBacktester:
         merged["contrib"] = merged["real_weight"] * merged["next_pct_chg"]
         daily_ret = merged.groupby("date")["contrib"].sum()
         
-        daily_turnover = 1.0 / self.holding_period
-        daily_cost = daily_turnover * 2 * current_cost
-        daily_ret_net = daily_ret - daily_cost
+        # === 修复开始 ===
+        # 1. 计算当天的实际总仓位 (例如满仓是1.0，半仓是0.5，空仓是0.0)
+        daily_pos_ratio = merged.groupby("date")["real_weight"].sum()
+        
+        # 2. 计算理论基础换手率
+        base_turnover = 1.0 / self.holding_period
+        
+        # 3. 动态计算成本：只有持仓的部分才承担换仓成本
+        # 如果 daily_pos_ratio 为 0，则 adjusted_daily_cost 为 0
+        adjusted_daily_cost = base_turnover * 2 * current_cost * daily_pos_ratio
+        
+        # 4. 净收益 = 原始收益 - 动态成本
+        daily_ret_net = daily_ret - adjusted_daily_cost
+        # === 修复结束 ===
         
         # 5. 结果
         equity_curve = (1 + daily_ret_net).cumprod()
-        equity_curve = equity_curve.reindex(all_dates).ffill().fillna(1.0)
         
         # 加载 Benchmark (这里简单处理，如果截断了时间，benchmark 也要截断)
         idx_code = self.config.get("preprocessing", {}).get("labels", {}).get("index_code", "000300.SH")
