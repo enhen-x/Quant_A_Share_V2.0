@@ -221,7 +221,7 @@ python scripts/clean_and_check.py
 2. 质量报告：生成 `data/raw_cleaned/data_quality_report.csv`。请务必查看此报告，确认哪些股票被标记为 `REJECT` 及其原因（如 `HIGH_SUSPENSION` 或 `LOW_LIQUIDITY`）。
 
 
-#### 2.5 数据探索性分析 (EDA) [新增]
+#### 2.5 数据探索性分析 (EDA) 
 
 在清洗完成后，强烈建议运行 EDA 模块，分析数据的分布特征、停牌情况和动量效应，以便为特征工程提供依据。
 
@@ -237,13 +237,39 @@ python scripts/run_eda.py --sample 500
 
 - `check_alignment.png`: 检查个股与指数走势是否对齐（验证数据源质量）。
 
+<p align="center">
+  <h3 align="center">检查数据是否对齐</h3>
+  <img src="architecture\test_result\eda\20251207_175729\check_alignment.png" width="600" alt="检查数据是否对齐">
+</p>
+
+
 - `dist_returns.png`: 日收益率分布图（辅助确定 Label 阈值）。
+
+<p align="center">
+  <h3 align="center">收益率自相关性分布</h3>
+  <img src="architecture\test_result\eda\20251207_175729\dist_returns.png" width="600" alt="收益率自相关性分布">
+</p>
 
 - `dist_suspension.png`: 个股停牌率分布（识别垃圾股）。
 
+<p align="center">
+  <h3 align="center">个股停牌率分布</h3>
+  <img src="architecture\test_result\eda\20251207_175729\dist_suspension.png" width="600" alt="个股停牌率分布">
+</p>
+
 - `dist_autocorr.png`: 收益率自相关性分布（判断动量/反转特征）。
 
+<p align="center">
+  <h3 align="center">日收益率分布图</h3>
+  <img src="architecture\test_result\eda\20251207_175729\dist_autocorr.png" width="600" alt="日收益率分布图">
+</p>
+
 - `dist_liquidity.png`: 流动性/换手率分布。
+
+<p align="center">
+  <h3 align="center">日收益率分布图</h3>
+  <img src="architecture\test_result\eda\20251207_175729\dist_liquidity.png" width="600" alt="日收益率分布图">
+</p>
 
 **数据报告 (reports/eda/)：**
 
