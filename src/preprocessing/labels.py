@@ -66,59 +66,70 @@ class LabelGenerator:
             return df
         
         # ----------------------------------------------------------------------
-        # 1. 确定基准价格 (Entry Price)
+        # 1. 准备两条价格曲线 (修改点)
         # ----------------------------------------------------------------------
-        # 逻辑：T日预测，T+1日按 VWAP 或 Open/Close 入场
+        
+        # A. 出场基准：使用 Close (后续会进行平滑处理)
+        price_for_exit = df["close"]
+        
+        # B. 入场基准：使用 VWAP (T+1 均价买入)
+        # 如果配置开启 use_vwap 且有成交额数据，则计算 VWAP，否则降级为 Open 或 Close
         if self.use_vwap and "amount" in df.columns and "volume" in df.columns:
-            # 均价 = 成交额 / 成交量 (避开停牌除零)
             vwap = df["amount"] / (df["volume"] + 1e-8)
-            price_base = vwap.where(df["volume"] > 0, df["close"])
+            price_for_entry = vwap.where(df["volume"] > 0, df["close"])
         else:
-            price_base = df["close"]
+            # 如果没有 VWAP 数据，就退化为使用 Close
+            price_for_entry = df["close"]
 
         # ----------------------------------------------------------------------
-        # 2. 计算标签 (分流处理)
+        # 2. 计算标签
         # ----------------------------------------------------------------------
         if self.method == "triple_barrier":
-            df = self._calc_triple_barrier(df, price_base)
+            # 三相屏障通常还是基于单一价格波动，这里暂不修改，或者您可以决定是否也用 VWAP 入场
+            df = self._calc_triple_barrier(df, price_for_entry) 
         else:
-            df = self._calc_fixed_time(df, price_base)
+            # 将两条曲线都传进去
+            df = self._calc_fixed_time(df, price_for_entry, price_for_exit)
 
         # ----------------------------------------------------------------------
-        # 3. 统一后处理 (一字板过滤)
+        # 3. 统一后处理
         # ----------------------------------------------------------------------
         if self.filter_limit:
             self._apply_limit_filter(df)
 
         return df
 
-    def _calc_fixed_time(self, df: pd.DataFrame, price_base: pd.Series) -> pd.DataFrame:
-        """原版：固定时间窗口收益（增加了平滑逻辑）"""
+    def _calc_fixed_time(self, df: pd.DataFrame, price_entry_series: pd.Series, price_exit_series: pd.Series) -> pd.DataFrame:
+        """
+        修改版：混合价格源计算收益
+        Entry: 来自 price_entry_series (如 VWAP)
+        Exit:  来自 price_exit_series (如 Close，并进行平滑)
+        """
         
-        # 1. 获取平滑窗口参数 (默认 1，即不平滑)
+        # 1. 获取平滑窗口参数
         window = self.cfg.get("smooth_window", 1)
         
-        # 2. 计算退出价格 (Exit Price)
+        # 2. 计算退出价格 (基于 price_exit_series / Close)
         if window > 1:
-            # 核心修改点：
-            # rolling(window, center=True) 会取当前点及前后的数据平均
-            # 例如 window=3, center=True，对于 T+5 这一天，它计算的是 Avg(T+4, T+5, T+6)
-            # min_periods=1 保证边缘数据也能计算
-            smoothed_price = price_base.rolling(window=window, center=True, min_periods=1).mean()
-            
-            # 将平滑后的价格序列向未来移动 horizon 天
+            # 对 Close 进行平滑
+            smoothed_price = price_exit_series.rolling(window=window, center=True, min_periods=1).mean()
+            # 移动 Horizon 天作为卖出价
+            # 比如 horizon=4 (T+1 -> T+5)，这里就是 shift(-5)
             exit_price = smoothed_price.shift(-(1 + self.horizon))
         else:
-            # 原逻辑
-            exit_price = price_base.shift(-(1 + self.horizon))
+            exit_price = price_exit_series.shift(-(1 + self.horizon))
         
-        # Entry 保持不变 (T+1 入场)
-        entry_price = price_base.shift(-1)
+        # 3. 计算入场价格 (基于 price_entry_series / VWAP)
+        # T+1 入场
+        entry_price = price_entry_series.shift(-1)
         
-        # 3. 计算收益率
+        # 4. 计算收益率
+        # (卖出价 / 买入价) - 1
         raw_ret = (exit_price / entry_price) - 1.0
         
-        # ... (后续代码保持不变)
+        # ------------------------------------------------------------------
+        # ... 后续代码保持不变 (处理超额收益等) ...
+        # ------------------------------------------------------------------
         label_col = f"label_{self.horizon}d"
         df[label_col] = raw_ret
         
