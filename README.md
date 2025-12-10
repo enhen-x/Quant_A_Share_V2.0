@@ -13,9 +13,12 @@
 4.  **实战导向的推荐能力**：不仅能跑回测，更能每日生成可执行的**精选股票推荐列表**，打通从研究到交易的“最后一公里”。
 
 
-项目流程图如下
+项目流程图如下:
 
-![项目流程图](architecture\data_clean\QUANT_A_SHARE_V2.png)
+<p align="center">
+  <h3 align="center">项目整体流程图</h3>
+  <img src="architecture\data_clean\QUANT_A_SHARE_V2.png" width="800" alt="项目流程图">
+</p>
 ---
 
 # 🧪 目前进度 (Current Progress)
