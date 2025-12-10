@@ -5,6 +5,13 @@
 
 **Quant_A_Share_V2.0** 致力于为个人投资者打造一个**基于机器学习的 A 股量化决策系统**。本项目不追求复杂的黑盒魔法，而是强调工程化、透明化和可验证性，旨在解决散户在量化投资中面临的“数据乱、回测假、落地难”三大痛点。
 
+项目回测曲线图如下：
+
+<p align="center">
+  <h3 align="center">资金曲线图</h3>
+  <img src="architecture\test_result\backtest_result\equity_curve.png" width="600" alt="资金曲线图">
+ </p>
+ 
 核心目标包括：
 
 1.  **构建工业级数据流水线**：实现从数据下载、清洗、质检到特征工程的全自动化闭环，确保输入模型的每一条数据都干净、可靠。
@@ -19,7 +26,7 @@
   <h3 align="center">项目整体流程图</h3>
   <img src="architecture\data_clean\QUANT_A_SHARE_V2.png" width="800" alt="项目流程图">
 </p>
----
+
 
 # 🧪 目前进度 (Current Progress)
 
