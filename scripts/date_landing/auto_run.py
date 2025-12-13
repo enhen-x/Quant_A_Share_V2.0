@@ -10,6 +10,7 @@ PYTHON_EXE = sys.executable
 # 下载脚本路径
 SCRIPT_PATH = os.path.join("scripts", "download_data.py")
 
+
 def main():
     print(f"=== 开始全自动挂机下载 ===")
     print(f"策略：报错 -> 等待 5 分钟 -> 自动重启 (断点续传)")

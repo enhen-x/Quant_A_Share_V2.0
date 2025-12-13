@@ -66,29 +66,46 @@ class LabelGenerator:
             return df
         
         # ----------------------------------------------------------------------
-        # 1. 准备两条价格曲线 (修改点)
+        # 1. 准备价格曲线
         # ----------------------------------------------------------------------
         
-        # A. 出场基准：使用 Close (后续会进行平滑处理)
-        price_for_exit = df["close"]
-        
-        # B. 入场基准：使用 VWAP (T+1 均价买入)
-        # 如果配置开启 use_vwap 且有成交额数据，则计算 VWAP，否则降级为 Open 或 Close
-        if self.use_vwap and "amount" in df.columns and "volume" in df.columns:
+        # 计算 VWAP (均价 = 成交额 / 成交量)
+        # 您的需求：T+5 平均价格 - T+1 平均价格
+        # 所以入场和出场都应该基于 VWAP
+        if "amount" in df.columns and "volume" in df.columns:
             vwap = df["amount"] / (df["volume"] + 1e-8)
-            price_for_entry = vwap.where(df["volume"] > 0, df["close"])
+            # 过滤掉没有成交量的停牌数据，使用 Close 填充
+            price_vwap = vwap.where(df["volume"] > 0, df["close"])
         else:
-            # 如果没有 VWAP 数据，就退化为使用 Close
-            price_for_entry = df["close"]
+            logger.warning("未找到 amount/volume 列，降级使用 close 计算标签")
+            price_vwap = df["close"]
+
+        # A. 出场基准：按照您的需求，使用均价 (VWAP)
+        # 原代码：price_for_exit = df["close"]  <-- 修改点
+        price_for_exit = price_vwap
+        
+        # B. 入场基准：使用均价 (VWAP)
+        price_for_entry = price_vwap
 
         # ----------------------------------------------------------------------
         # 2. 计算标签
         # ----------------------------------------------------------------------
         if self.method == "triple_barrier":
-            # 三相屏障通常还是基于单一价格波动，这里暂不修改，或者您可以决定是否也用 VWAP 入场
             df = self._calc_triple_barrier(df, price_for_entry) 
         else:
-            # 将两条曲线都传进去
+            # ------------------------------------------------------------------
+            # 注意：关于 T+5 还是 T+6 的说明
+            # 原代码逻辑：Entry 是 shift(-1) (T+1), Exit 是 shift(-(1+horizon))
+            # 
+            # 如果您配置 horizon = 5:
+            # Entry = T+1
+            # Exit  = T+(1+5) = T+6
+            # 此时计算的是：(T+6均价 - T+1均价) / T+1均价
+            #
+            # 如果您严格需要 "T+5" (即 T+1 买入后，第 4 天后的 T+5 卖出):
+            # 请在配置文件 (config/main.yaml) 中将 horizon 设置为 4。
+            # 或者直接修改下方的 _calc_fixed_time 逻辑。
+            # ------------------------------------------------------------------
             df = self._calc_fixed_time(df, price_for_entry, price_for_exit)
 
         # ----------------------------------------------------------------------
