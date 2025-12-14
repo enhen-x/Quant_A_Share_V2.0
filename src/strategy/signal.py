@@ -14,7 +14,6 @@ class TopKSignalStrategy:
     def __init__(self, top_k=None):
         self.conf = GLOBAL_CONFIG["strategy"]
         
-        # 逻辑：优先使用传入的 top_k (推荐模式)，否则读取配置 (回测模式)
         if top_k is not None:
             self.top_k = top_k
         else:
@@ -22,10 +21,12 @@ class TopKSignalStrategy:
             
         self.min_score = self.conf.get("min_pred", 0.0)
         
-        # 仓位管理配置
+        # === [新增] 读取平滑配置 ===
+        # 默认为 True，保持原有行为
+        self.enable_smoothing = self.conf.get("enable_score_smoothing", True)
+        
         self.pos_cfg = self.conf.get("position_control", {})
         
-        # 读取过滤配置
         filter_cfg = GLOBAL_CONFIG.get("preprocessing", {}).get("filter", {})
         self.min_price = filter_cfg.get("min_price", 0.0)      
         self.max_price = filter_cfg.get("max_price", 99999.0)  
@@ -36,6 +37,7 @@ class TopKSignalStrategy:
         self.exclude_st = filter_cfg.get("exclude_st", True)
         self.paths = GLOBAL_CONFIG["paths"]
 
+    # ... (_load_filter_data, _calc_position_ratio 保持不变) ...
     def _load_filter_data(self):
         """加载辅助数据: amount, turnover, close, pct_chg"""
         stock_path = os.path.join(self.paths["data_processed"], "all_stocks.parquet")
@@ -54,7 +56,6 @@ class TopKSignalStrategy:
             df_stocks = df_stocks.sort_values(["symbol", "date"])
             df_stocks["pct_chg"] = df_stocks.groupby("symbol")["close"].pct_change()
             
-        # 加载列
         cols = ["date", "symbol", "turnover", "amount", "close", "pct_chg"] 
         existing_cols = [c for c in cols if c in df_stocks.columns]
         
@@ -103,23 +104,29 @@ class TopKSignalStrategy:
     def generate(self, pred_df: pd.DataFrame) -> pd.DataFrame:
         initial_count = len(pred_df)
         
-        # === 1. 新增：计算 3 日平滑分数 (MA3) ===
-        SMOOTH_WINDOW = 3
-        # 确保数据按 symbol 和 date 排序，以便进行 rolling 计算
-        # pred_df 必须包含历史数据才能计算 rolling mean
-        pred_df = pred_df.sort_values(by=["symbol", "date"])
+        # 默认使用原始分进行排序
+        sort_score_col = 'pred_score'
         
-        # 计算 3 日得分均值
-        # min_periods=1 确保了数据开始的前两天也有得分，用于过滤
-        pred_df['score_smoothed'] = pred_df.groupby('symbol')['pred_score'].transform(
-            lambda x: x.rolling(window=SMOOTH_WINDOW, min_periods=1).mean()
-        )
-        # 确定用于排序和过滤的列名
-        sort_score_col = 'score_smoothed'
-        
+        # === 根据配置决定是否进行平滑 ===
+        if self.enable_smoothing:
+            SMOOTH_WINDOW = 3
+            # 确保数据排序
+            pred_df = pred_df.sort_values(by=["symbol", "date"])
+            
+            # 计算平滑分
+            pred_df['score_smoothed'] = pred_df.groupby('symbol')['pred_score'].transform(
+                lambda x: x.rolling(window=SMOOTH_WINDOW, min_periods=1).mean()
+            )
+            # 切换排序字段
+            sort_score_col = 'score_smoothed'
+        else:
+            # 如果不平滑，为了防止逻辑中断，可以把 score_smoothed 设为和 pred_score 一样
+            # 或者直接让后续逻辑引用 pred_score
+            pass
+
         df_stocks, _ = self._load_filter_data()
         
-        # 合并行情 (使用原始 pred_df 作为基础)
+        # 合并行情
         if df_stocks is not None:
             pred_df = pd.merge(pred_df, df_stocks, on=["date", "symbol"], how="inner", suffixes=("", "_raw"))
 
@@ -164,15 +171,18 @@ class TopKSignalStrategy:
         if not pool_cfg.get("include_bj", False):
             pred_df = pred_df[~pred_df["symbol"].str.match(r"^(8|4|92)")]
 
-        # 6. 今日涨停过滤 (新增)
+        # 6. 今日涨停过滤
         if "pct_chg" in pred_df.columns:
             limit_up_mask = pred_df["pct_chg"] > 0.095
             if limit_up_mask.sum() > 0:
                 pred_df = pred_df[~limit_up_mask]
 
-        # 7. 最低分数 (使用平滑后的分数进行信心过滤)
+        # 7. 最低分数 (动态使用 sort_score_col)
+        # 注意：如果不开启平滑，这里就是用 pred_score 过滤
         if self.min_score > -999:
-            pred_df = pred_df[pred_df[sort_score_col] >= self.min_score]
+            # 确保列存在 (防止 score_smoothed 是 NaN 的情况被错误过滤，如果不平滑，列可能不存在)
+            if sort_score_col in pred_df.columns:
+                pred_df = pred_df[pred_df[sort_score_col] >= self.min_score]
 
         filtered_count = len(pred_df)
         if filtered_count == 0:
@@ -181,10 +191,9 @@ class TopKSignalStrategy:
         # ==========================
         # 排序选股 & 仓位控制
         # ==========================
-        # 使用平滑得分进行排序
+        # [修改] 使用动态确定的列名进行排序
         sorted_df = pred_df.sort_values(by=["date", sort_score_col], ascending=[True, False])
         
-        # 这里使用 self.top_k，它现在可以是 4
         top_picks = sorted_df.groupby("date").head(self.top_k).copy()
         
         # 基础权重
@@ -197,5 +206,7 @@ class TopKSignalStrategy:
         # 最终权重
         top_picks["weight"] = top_picks["base_weight"] * top_picks["pos_ratio"]
         
-        signal_df = top_picks[["date", "symbol", "weight"]].copy()
+        # 返回结果 (带 pos_ratio)
+        signal_df = top_picks[["date", "symbol", "weight", "pos_ratio"]].copy()
+        
         return signal_df.sort_values(["date", "symbol"]).reset_index(drop=True)

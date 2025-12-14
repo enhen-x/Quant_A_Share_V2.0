@@ -189,7 +189,7 @@ model:
   walk_forward:
     enable: true
     start_year: 2019         # [关键] 哪一年开始产生预测？(即 2019之前的都是初始训练集)
-    train_window_type: "rolling" # "expanding" (扩张: 2010~T) 或 "rolling" (滚动: T-N~T)
+    train_window_type: "expanding" # "expanding" (扩张: 2010~T) 或 "rolling" (滚动: T-N~T)
     rolling_window_size: 5   # 仅当 rolling 时生效，训练窗口长度(年)
     update_freq: "yearly"    # 更新频率 (目前支持按年)
 
@@ -209,16 +209,21 @@ strategy:
   rebalance_mode: "periodic"
 
 
+ # 是否开启预测分平滑 (MA3)
+  # true:  使用最近 3 天预测分的平均值进行排序。优点：稳健，抗噪音；缺点：信号滞后。
+  # false: 仅使用当天的预测分进行排序。优点：灵敏，捕捉瞬间爆发；缺点：容易受噪音干扰。
+  enable_score_smoothing: false
+
   # === [升级] 动态仓位管理 ===
   # 逻辑：
   # 1. 价格 > MA20: 强趋势 -> 100% 仓位
   # 2. MA60 < 价格 <= MA20: 震荡/回调 -> 50% 仓位
   # 3. 价格 <= MA60: 熊市 -> 0% 仓位 (空仓)
   position_control:
-    enable: true
+    enable: false  # 是否启用动态仓位管理
     index_code: "000300.SH"
     fast_ma: 20    # 快线
-    slow_ma: 540    # 慢线
+    slow_ma: 60    # 慢线
     
     # 对应的仓位比例 [强趋势, 震荡, 熊市]
     # 你可以根据风险偏好调整，比如 [0.8, 0.4, 0.0]

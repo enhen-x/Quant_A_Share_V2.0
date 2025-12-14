@@ -9,7 +9,7 @@ import re
 
 # 路径适配
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# 从当前文件位置 (scripts/analisis) 返回两级到项目根目录
+# 从当前文件位置 (scripts/back_test) 返回两级到项目根目录
 project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -157,6 +157,7 @@ def main():
     strategy = TopKSignalStrategy(top_k=rec_k)
     
     # **关键：传递包含历史数据的 pred_df，以便 strategy.generate 计算平滑得分**
+    # 注意：需确保 src/strategy/signal.py 已修改为返回包含 pos_ratio 的列
     recommend_df = strategy.generate(pred_df)
     
     # 筛选出最新的信号（即今天）
@@ -168,6 +169,12 @@ def main():
         logger.info("Top 5 原始预测得分 (未经过滤):")
         print(pred_df[pred_df["date"] == latest_date].sort_values("pred_score", ascending=False).head(5))
         return
+
+    # === [新增] 获取风控仓位系数 ===
+    current_pos_ratio = 1.0
+    if "pos_ratio" in recommend_df_latest.columns:
+        # 获取当天的风控系数 (所有股票同一天系数相同)
+        current_pos_ratio = recommend_df_latest["pos_ratio"].iloc[0]
 
     # 补充股票名称以便阅读
     meta_path = os.path.join(GLOBAL_CONFIG["paths"]["data_meta"], "all_stocks_meta.parquet")
@@ -181,17 +188,30 @@ def main():
                                    on=["date", "symbol"], how="left")
     
     # 格式化输出
-    print("\n" + "="*60)
+    print("\n" + "="*70)
     print(f"🌟 {latest_date.strftime('%Y-%m-%d')} 每日精选推荐 (Top {len(recommend_df_latest)}) 🌟")
-    print("="*60)
     
-    cols = ["symbol", "name", "pred_score", "weight"]
+    # === [新增] 显式打印风控状态 ===
+    print("-" * 70)
+    print(f"🛡️  风控系统建议总仓位: {current_pos_ratio * 100:.0f}%")
+    if current_pos_ratio < 1.0:
+        if current_pos_ratio == 0.0:
+            print("⚠️  [极高风险] 大盘处于熊市阶段，策略建议空仓观望！(列表中股票仅供跟踪研究)")
+        else:
+            print(f"⚠️  [风险提示] 大盘处于震荡/回调阶段，建议降低仓位至 {current_pos_ratio * 100:.0f}%")
+    else:
+        print("✅  [积极信号] 市场趋势良好，建议正常仓位操作。")
+    print("-" * 70)
+    
+    # [修改] 输出列中加入 pos_ratio
+    cols = ["symbol", "name", "pred_score", "pos_ratio", "weight"]
     print_cols = [c for c in cols if c in recommend_df_latest.columns]
     
     print_df = recommend_df_latest[print_cols].sort_values("pred_score", ascending=False).reset_index(drop=True)
     
     # 尝试使用 tabulate 美化输出
     try:
+        # floatfmt 控制小数位数，让 pred_score 和 weight 显示更清晰
         print(print_df.to_markdown(index=True, floatfmt=".4f"))
     except:
         print(print_df)
@@ -204,7 +224,7 @@ def main():
     out_file = os.path.join(out_dir, f"picks_{version}_{latest_date.strftime('%Y%m%d')}.csv")
     print_df.to_csv(out_file, index=False, encoding="utf-8-sig")
     print(f"\n[文件] 推荐列表已保存至: {out_file}")
-    print("="*60)
+    print("="*70)
 
 if __name__ == "__main__":
     main()
