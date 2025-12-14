@@ -5,11 +5,12 @@ import sys
 import argparse
 import datetime
 import pandas as pd
+import subprocess
 from tqdm import tqdm
 
 # 路径适配
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# 从当前文件位置 (scripts/analisis) 返回两级到项目根目录
+# 从当前文件位置 (scripts/date_landing) 返回两级到项目根目录
 project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -65,7 +66,6 @@ class DataUpdater:
     def update_calendar(self):
         logger.info(">>> 步骤 1/3: 检查并更新交易日历...")
         
-        # 简单策略：交易日历数据量小，直接重新获取覆盖，确保包含未来的日期
         try:
             # 获取范围：从配置开始日期 到 未来一年
             start_date = self.config["data"]["start_date"]
@@ -109,9 +109,8 @@ class DataUpdater:
         
         # 2. 下载增量
         logger.info(f"正在下载指数增量数据: {start_fetch_date} -> {self.today}")
-        df_new = self.datahub.fetch_index_price(index_code) # 注意：部分接口可能不支持 start/end 参数，需在 fetch 内部过滤
+        df_new = self.datahub.fetch_index_price(index_code) 
         
-        # 如果接口返回了全量，我们需要自行截取
         if not df_new.empty:
             df_new["date"] = pd.to_datetime(df_new["date"])
             mask = df_new["date"] >= pd.to_datetime(start_fetch_date)
@@ -138,21 +137,13 @@ class DataUpdater:
     def update_stocks(self):
         logger.info(">>> 步骤 3/3: 增量更新个股数据...")
         
-        # 1. 获取目标股票池
-        # 这里复用 download_data.py 中的逻辑，先读 meta 再 filter
-        # 为了简单，我们这里直接读取 meta 列表，并根据本地是否有文件来决定策略
         meta_path = os.path.join(self.paths["data_meta"], "all_stocks_meta.parquet")
         if not os.path.exists(meta_path):
             logger.error("元数据不存在，请先运行 init_stock_pool.py")
             return
             
-        df_meta = read_parquet(meta_path)
-        # 这里可以加入 filter_stocks 逻辑，为了代码简洁暂时略过，假设 meta 已经是全量
-        # 建议：如果只想更新 data/raw 下已有的文件，可以遍历文件夹
-        
-        # 策略：遍历 data/raw 下已有的 parquet 文件进行更新
-        # 这样避免了"更新脚本"意外下载了之前被配置剔除的股票
         raw_dir = self.paths["data_raw"]
+        # 仅更新 data/raw 下已有的文件
         existing_files = [f for f in os.listdir(raw_dir) if f.endswith(".parquet") and f[0].isdigit()]
         
         if not existing_files:
@@ -162,9 +153,9 @@ class DataUpdater:
         update_count = 0
         skip_count = 0
         
-        # 获取最新的市场交易日 (Market Last Date)
+        # 获取最新的市场交易日
         if self.trade_dates:
-            market_last_date = self.trade_dates[-1] # datetime.date 对象
+            market_last_date = self.trade_dates[-1] 
         else:
             market_last_date = datetime.date.today()
 
@@ -175,27 +166,23 @@ class DataUpdater:
             file_path = os.path.join(raw_dir, file_name)
             
             try:
-                # 1. 读取本地最后一行 (优化：不需要读全量，但 parquet 读尾部比较麻烦，先读全量)
-                # 如果文件很大，可以考虑只读 meta 信息，但在日线级别通常很快
+                # 1. 读取本地最后一行
                 df_local = read_parquet(file_path)
                 last_date_str = self.get_last_date(df_local)
                 
                 if not last_date_str:
-                    # 文件损坏或为空，重新下载全量
                     start_date = self.config["data"]["start_date"]
                 else:
                     last_date = datetime.datetime.strptime(last_date_str, "%Y-%m-%d").date()
                     
                     # 检查是否已经是最新
-                    # 如果本地最后日期 >= 市场最后交易日，跳过
                     if last_date >= market_last_date:
                         skip_count += 1
                         continue
                         
                     start_date = self.get_next_date(last_date_str)
 
-                # 2. 下载增量
-                # 为了防止 start_date > end_date 报错，加个判断
+                # 为了防止 start_date > end_date 报错
                 if start_date > self.today:
                     skip_count += 1
                     continue
@@ -203,7 +190,7 @@ class DataUpdater:
                 df_new = self.datahub.fetch_price(symbol, start_date=start_date, end_date=self.today)
                 
                 if not df_new.empty:
-                    # 3. 合并与去重
+                    # 合并与去重
                     df_final = pd.concat([df_local, df_new], axis=0)
                     df_final = df_final.drop_duplicates(subset=["date"], keep="last")
                     df_final = df_final.sort_values("date").reset_index(drop=True)
@@ -211,7 +198,6 @@ class DataUpdater:
                     save_parquet(df_final, file_path)
                     update_count += 1
                 else:
-                    # 没下载到数据（可能是停牌）
                     skip_count += 1
                     
                 pbar.set_postfix({"Upd": update_count, "Skip": skip_count})
@@ -221,28 +207,74 @@ class DataUpdater:
         
         logger.info(f"更新完成。已更新: {update_count}, 跳过(无需更新/停牌): {skip_count}")
 
+def run_external_script(script_rel_path, step_name):
+    """
+    调用外部 Python 脚本
+    :param script_rel_path: 相对于项目根目录的脚本路径 (如 scripts/analisis/clean_and_check.py)
+    :param step_name: 步骤名称
+    """
+    script_path = os.path.join(project_root, script_rel_path)
+    
+    logger.info("\n" + "="*60)
+    logger.info(f"🚀 正在启动: {step_name} ...")
+    logger.info(f"   脚本路径: {script_path}")
+    logger.info("="*60)
+    
+    if not os.path.exists(script_path):
+        logger.error(f"❌ 找不到脚本文件: {script_path}")
+        return False
+        
+    try:
+        # 使用当前 Python 解释器执行
+        cmd = [sys.executable, script_path]
+        # cwd 设置为 project_root 确保脚本内部相对路径逻辑正常
+        result = subprocess.run(cmd, cwd=project_root)
+        
+        if result.returncode == 0:
+            logger.info(f"✅ {step_name} 执行成功。")
+            return True
+        else:
+            logger.error(f"❌ {step_name} 执行失败，返回码: {result.returncode}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ {step_name} 发生异常: {e}")
+        return False
+
 def main():
-    parser = argparse.ArgumentParser(description="增量更新本地数据")
+    parser = argparse.ArgumentParser(description="增量更新本地数据并运行全流程")
     parser.parse_args()
     
-    updater = DataUpdater()
+    # === 1. 更新数据 (Download) ===
+    try:
+        updater = DataUpdater()
+        updater.update_calendar()
+        updater.update_index()
+        updater.update_stocks()
+    except Exception as e:
+        logger.error(f"数据更新阶段发生严重错误: {e}")
+        return
+
+    # === 2. 清洗数据 (Clean) ===
+    # 脚本: scripts/analisis/clean_and_check.py
+    if not run_external_script(os.path.join("scripts", "analisis", "clean_and_check.py"), "数据清洗 (Clean)"):
+        logger.warning("流程中断：数据清洗失败。")
+        return
+
+    # === 3. 构建特征 (Feature Engineering) ===
+    # 脚本: scripts/feature_create/rebuild_features.py
+    if not run_external_script(os.path.join("scripts", "feature_create", "rebuild_features.py"), "特征工程 (Features)"):
+        logger.warning("流程中断：特征构建失败。")
+        return
+
+    # === 4. 每日推荐 (Recommendation) ===
+    # 脚本: scripts/back_test/run_recommendation.py
+    if not run_external_script(os.path.join("scripts", "back_test", "run_recommendation.py"), "策略推荐 (Recommendation)"):
+        logger.warning("流程中断：推荐生成失败。")
+        return
     
-    # 1. 先更日历
-    updater.update_calendar()
-    
-    # 2. 更指数
-    updater.update_index()
-    
-    # 3. 更个股
-    updater.update_stocks()
-    
-    logger.info("="*50)
-    logger.info("⚠️  数据更新已完成 (data/raw)。")
-    logger.info("下一步建议：")
-    logger.info("1. python scripts/clean_and_check.py (清洗新数据)")
-    logger.info("2. python scripts/run_eda.py (检查数据质量)")
-    logger.info("3. python scripts/rebuild_features.py (重算特征)")
-    logger.info("="*50)
+    logger.info("\n" + "="*60)
+    logger.info("🎉🎉🎉 每日全流程任务顺利完成！请查看 reports 目录下的推荐结果。")
+    logger.info("="*60)
 
 if __name__ == "__main__":
     main()
