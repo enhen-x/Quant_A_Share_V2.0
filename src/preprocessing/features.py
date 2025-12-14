@@ -50,98 +50,145 @@ class FeatureGenerator:
         if self.cfg.get("enable_volume", True):
             df = self._add_volume_features(df)
 
-        # [新增] 将市值作为特征
-        # 注意：需要保证 upstream 传进来的 df 有 amount 和 turnover
+        # === [新增] 8. 变化率/斜率特征 (Slope) ===
+        if self.cfg.get("enable_slope", True):
+            df = self._add_slope_features(df)
+
+        # === [新增] 9. 波动率特征 (Volatility) ===
+        if self.cfg.get("enable_volatility", True):
+            window = self.cfg.get("vol_window", 20)
+            df = self._add_volatility_features(df, window)
+
+        # === [新增] 10. 量价相关性 (PV Corr) ===
+        if self.cfg.get("enable_pv_corr", True):
+            window = self.cfg.get("vol_window", 20)
+            df = self._add_pv_corr_features(df, window)
+
+        # 市值特征 (保持不变)
         if "amount" in df.columns and "turnover" in df.columns:
-            # 简单估算市值 (Amount / Turnover%)
             mcap = df["amount"] / (df["turnover"].replace(0, np.nan) * 0.01)
-            # 对市值取 Log，使其分布更均匀
             df["feat_mcap_log"] = np.log1p(mcap)
 
         return df
 
+    # ... (原有方法 _add_basic_features 到 _add_volume_features 保持不变) ...
     def _add_basic_features(self, df):
-        """基础特征: 收益率, 振幅, 换手(如有)"""
-        # 对数收益率
         df["feat_log_ret"] = np.log(df["close"] / df["close"].shift(1))
-        # 振幅 (High-Low)/Close
         df["feat_amplitude"] = (df["high"] - df["low"]) / df["close"].shift(1)
         return df
 
     def _add_ma_features(self, df, windows):
-        """均线偏离度"""
         for w in windows:
             ma = df["close"].rolling(window=w).mean()
-            # 使用偏离度 (Price / MA - 1) 归一化，而不是绝对价格
             df[f"feat_ma_{w}_bias"] = df["close"] / ma - 1.0
         return df
 
     def _add_macd_features(self, df):
-        """MACD (12, 26, 9)"""
-        # 注意：使用 EMA 计算
         ema12 = df["close"].ewm(span=12, adjust=False).mean()
         ema26 = df["close"].ewm(span=26, adjust=False).mean()
         dif = ema12 - ema26
         dea = dif.ewm(span=9, adjust=False).mean()
         macd = (dif - dea) * 2
-        
-        # 归一化处理：除以收盘价，使其对不同价位的股票可比
         df["feat_macd_dif"] = dif / df["close"]
-        df["feat_macd_dea"] = dea / df["close"]
+        # dea 与 dif 高度相关，可以选择性保留或做差分
+        # df["feat_macd_dea"] = dea / df["close"] 
         df["feat_macd"] = macd / df["close"]
         return df
 
     def _add_rsi_features(self, df, window):
-        """RSI 相对强弱指标"""
         delta = df["close"].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-        
         rs = gain / loss
-        # 0-100 归一化到 0-1
         df[f"feat_rsi_{window}"] = (100 - (100 / (1 + rs))) / 100.0
         return df
     
     def _add_kdj_features(self, df, window):
-        """KDJ (未成熟随机值)"""
         low_list = df["low"].rolling(window=window).min()
         high_list = df["high"].rolling(window=window).max()
-        
         rsv = (df["close"] - low_list) / (high_list - low_list + 1e-9)
-        
-        # 简单迭代计算 K, D, J
-        # 这里用 EWM 模拟 1/3 权重
         df[f"feat_kdj_k"] = rsv.ewm(alpha=1/3, adjust=False).mean()
         df[f"feat_kdj_d"] = df[f"feat_kdj_k"].ewm(alpha=1/3, adjust=False).mean()
         df[f"feat_kdj_j"] = 3 * df[f"feat_kdj_k"] - 2 * df[f"feat_kdj_d"]
         return df
 
     def _add_boll_features(self, df, window, std_dev):
-        """布林带宽度与位置"""
         ma = df["close"].rolling(window=window).mean()
         std = df["close"].rolling(window=window).std()
-        
         upper = ma + std_dev * std
         lower = ma - std_dev * std
-        
-        # 1. 股价在布林带的位置 (0=下轨, 0.5=中轨, 1=上轨)
         df["feat_boll_pos"] = (df["close"] - lower) / (upper - lower + 1e-9)
-        # 2. 布林带宽度 (归一化)
         df["feat_boll_width"] = (upper - lower) / ma
         return df
 
     def _add_volume_features(self, df):
-        """量能特征"""
-        # 量比: 今日量 / 5日均量
         ma5_vol = df["volume"].rolling(window=5).mean()
         df["feat_vol_ratio_5"] = df["volume"] / (ma5_vol + 1e-9)
-        
-        # 换手率 (如果存在)
         if "turnover" in df.columns:
-            # 换手率通常已经是百分比，除以 100 归一化或者保持原样
-            # 这里做 Log 处理使其分布更正态
             df["feat_turnover_log"] = np.log1p(df["turnover"])
+        return df
 
-    
+    # === [新增方法实现] ===
+
+    def _add_slope_features(self, df):
+        """
+        计算指标的变化率 (Slope/Delta)。
+        模型通常无法从单点值判断趋势方向，加入斜率特征可以弥补这一缺陷。
+        """
+        # 1. RSI 斜率
+        if "feat_rsi_14" in df.columns:
+            # 3日变动值
+            df["feat_rsi_14_slope"] = df["feat_rsi_14"] - df["feat_rsi_14"].shift(3)
             
+        # 2. MACD 柱变化 (红绿柱是在变长还是变短)
+        if "feat_macd" in df.columns:
+            df["feat_macd_slope"] = df["feat_macd"] - df["feat_macd"].shift(1)
+            
+        # 3. 均线角度 (使用 5日线)
+        # 用 atan 计算弧度，归一化到 -1~1
+        ma5 = df["close"].rolling(5).mean()
+        ma5_slope = (ma5 - ma5.shift(1)) / ma5.shift(1) * 100
+        df["feat_ma_5_angle"] = np.arctan(ma5_slope)
+        
+        return df
+
+    def _add_volatility_features(self, df, window):
+        """
+        计算波动率特征 (ATR, Std)。
+        用于衡量个股风险和活跃度。
+        """
+        # 1. 归一化 ATR (Average True Range)
+        # TR = Max(H-L, |H-Cp|, |L-Cp|)
+        high_low = df["high"] - df["low"]
+        high_close = (df["high"] - df["close"].shift(1)).abs()
+        low_close = (df["low"] - df["close"].shift(1)).abs()
+        
+        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        atr = tr.rolling(window).mean()
+        
+        # 归一化：ATR / Price (类似变异系数)
+        df["feat_atr_norm"] = atr / df["close"]
+        
+        # 2. 收益率标准差 (历史波动率)
+        if "feat_log_ret" in df.columns:
+            df[f"feat_std_{window}"] = df["feat_log_ret"].rolling(window).std()
+            
+        return df
+
+    def _add_pv_corr_features(self, df, window):
+        """
+        计算量价相关性 (Price-Volume Correlation)。
+        corr > 0: 放量上涨或缩量下跌 (趋势确认)
+        corr < 0: 放量下跌或缩量上涨 (背离/出货)
+        """
+        # 使用 pct_change 序列计算相关性
+        pct_close = df["close"].pct_change()
+        pct_vol = df["volume"].pct_change()
+        
+        # 计算滚动相关系数
+        df[f"feat_pv_corr_{window}"] = pct_close.rolling(window).corr(pct_vol)
+        
+        # 填充一下初始 NaN，防止被 drop 太多
+        df[f"feat_pv_corr_{window}"] = df[f"feat_pv_corr_{window}"].fillna(0)
+        
         return df

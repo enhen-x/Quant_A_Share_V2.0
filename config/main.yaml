@@ -65,7 +65,7 @@ preprocessing:
   filter:
 # --- 1. 价格限制 ---
     max_price: 25              # (旧) 允许的最高股价
-    min_price: 5.0             # (新) 最低股价 (剔除低价垃圾股)
+    min_price: 1.5             # (新) 最低股价 (剔除低价垃圾股)
 
     # --- 2. 成交量/额限制 (兼容旧命名) ---
     min_turnover: 10000000     # (旧) 日均成交额下限 (这里保留旧名字，对应 Amount)
@@ -75,7 +75,7 @@ preprocessing:
     min_turnover_rate: 0.5     # (新) 日均换手率下限 (单位 %，对应真正的 Turnover Rate)
 
     # --- 4. 市值限制 (截图中的配置) ---
-    min_mcap: 5000000000       # (旧) 最小流通市值 (70亿)
+    min_mcap: 2000000000       # (旧) 最小流通市值 (70亿)
     max_mcap: 5000000000000     # (旧) 最大流通市值 (5000亿)
 
     # --- 5. 其他 ---
@@ -95,13 +95,21 @@ preprocessing:
     enable_boll: true
     enable_volume: true
 
+    # === [新增] 新因子开关 ===
+    enable_slope: true       # 启用斜率/变化率因子 (如 RSI_slope)
+    enable_volatility: true  # 启用波动率因子 (如 ATR, Std)
+    enable_pv_corr: true     # 启用量价相关性因子
+
     # 特征参数
-    ma_windows: [5, 10, 20, 60, 120]
+    ma_windows: [5, 10, 20, 60]
     rsi_window: 14
     kdj_window: 9
     boll_window: 20
     boll_std: 2
     # multi_scale_features: false
+
+    # [新增] 波动率计算窗口
+    vol_window: 20
 
   # 标签生成配置 (Label Generation)
   labels:
@@ -112,6 +120,12 @@ preprocessing:
     # 设为 3 意味着取 [T-1, T, T+1] 三天的均值作为退出价格
     # 设为 1 则不平滑（原逻辑）
     smooth_window: 3
+
+
+    # === [新增] 标签清洗配置 ===
+    # 针对上一轮分析发现的 max=4.61 的异常值，进行 1%~99% 去极值
+    enable_winsorize: true
+    winsorize_limits: [0.01, 0.99] # 截断上下 1% 的极端值
 
     # === 新增：标签生成方法 ===
     # 价格设置
@@ -145,8 +159,8 @@ preprocessing:
 
   # [新增] 数据质量清洗阈值
   quality:
-    max_suspension_rate: 0.1   # 停牌天数超过 10% 则剔除
-    min_avg_turnover: 1.0      # 日均换手率低于 1% 则剔除 (僵尸股)
+    max_suspension_rate: 0.3   # 停牌天数超过 10% 则剔除
+    min_avg_turnover: 0      # 日均换手率低于 1% 则剔除 (僵尸股)
 
 
 # ==============================================================================
