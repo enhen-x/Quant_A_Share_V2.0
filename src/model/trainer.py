@@ -22,9 +22,7 @@ class ModelTrainer:
         self.model_dir = os.path.join(self.paths["models"], self.version)
 
     def load_data(self):
-        """加载特征工程后的全量数据 (保持不变)"""
-        # ... (原有代码保持不变) ...
-        # (为了节省篇幅，这里不重复粘贴 load_data 的原有代码，请保持原样)
+        """加载特征工程后的全量数据，支持特征筛选"""
         data_path = os.path.join(self.paths["data_processed"], "all_stocks.parquet")
         if not os.path.exists(data_path):
             raise FileNotFoundError(f"未找到数据: {data_path}")
@@ -32,7 +30,31 @@ class ModelTrainer:
         logger.info(f"正在加载训练数据: {data_path} ...")
         df = read_parquet(data_path)
         
-        feature_cols = [c for c in df.columns if c.startswith("feat_")]
+        # === 特征筛选逻辑 ===
+        use_feature_selection = self.model_cfg.get("use_feature_selection", False)
+        
+        if use_feature_selection:
+            # 从配置文件加载筛选后的特征
+            selected_features_path = os.path.join(
+                self.paths["data_processed"], 
+                "selected_features.txt"
+            )
+            
+            if os.path.exists(selected_features_path):
+                with open(selected_features_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    feature_cols = [line.strip() for line in lines 
+                                    if line.strip() and not line.startswith("#")]
+                logger.info(f"使用筛选后的特征: {len(feature_cols)} 个")
+            else:
+                logger.warning(f"特征筛选配置文件不存在: {selected_features_path}")
+                logger.warning("回退到使用全部特征")
+                feature_cols = [c for c in df.columns if c.startswith("feat_")]
+        else:
+            # 使用全部特征
+            feature_cols = [c for c in df.columns if c.startswith("feat_")]
+            logger.info(f"使用全部特征: {len(feature_cols)} 个")
+        
         label_col = self.model_cfg["label_col"]
         
         if label_col not in df.columns:

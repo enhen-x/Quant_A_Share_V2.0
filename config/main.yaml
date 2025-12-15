@@ -175,14 +175,25 @@ model:
   train_val_split_date: "2023-01-01"
   train_ratio: 0.8
 
-  # XGBoost 参数
+  # XGBoost 参数 (优化后 - 2025-12-15)
+  # 优化要点：降低学习率、加强正则化、减小复杂度
   params:
-    n_estimators: 2000
-    max_depth: 6
-    learning_rate: 0.03
-    subsample: 0.9
-    colsample_bytree: 0.95
+    n_estimators: 3000         # 增加迭代次数（配合降低学习率）
+    max_depth: 5               # 从 6 降到 5，减少过拟合
+    learning_rate: 0.01       # 从 0.03 降到 0.01，更精细搜索
+    subsample: 0.8             # 从 0.9 降到 0.8，增加随机性
+    colsample_bytree: 0.8      # 从 0.95 降到 0.8，特征抽样
+    
+    # === 新增正则化参数 ===
+    reg_alpha: 0.1             # L1 正则化（稀疏化）
+    reg_lambda: 1.0            # L2 正则化（平滑化）
+    min_child_weight: 3        # 叶子节点最小样本权重
+    gamma: 0.1                 # 分裂所需最小增益
+    
     tree_method: "hist"
+  
+  # 早停耐心（增加到 100 轮）
+  early_stopping_rounds: 100
 
 
   # === 新增：滚动训练配置 (Walk-Forward) ===
@@ -192,6 +203,15 @@ model:
     train_window_type: "expanding" # "expanding" (扩张: 2010~T) 或 "rolling" (滚动: T-N~T)
     rolling_window_size: 5   # 仅当 rolling 时生效，训练窗口长度(年)
     update_freq: "yearly"    # 更新频率 (目前支持按年)
+
+  # === 新增：训练监控配置 (TensorBoard) ===
+  enable_tensorboard: true   # 是否启用 TensorBoard 监控
+  tensorboard:
+    log_interval: 10         # 每隔多少轮记录一次（默认每轮都记录）
+    log_feature_importance: true  # 是否记录特征重要性
+
+  # === 新增：特征筛选配置 ===
+  use_feature_selection: true  # 启用特征筛选（使用 selected_features.txt）
 
 
 # ==============================================================================

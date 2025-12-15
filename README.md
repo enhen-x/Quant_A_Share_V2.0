@@ -57,8 +57,6 @@
 
 
 ```text
-## 📌 项目结构 (Project Structure)
-
 Quant_A_SHARE_V2.0/
 ├── config/
 │   └── main.yaml               # [核心] 全局配置文件
@@ -108,7 +106,8 @@ Quant_A_SHARE_V2.0/
 │   │
 │   ├── model/                  # 机器学习模块
 │   │   ├── trainer.py          # 训练流程管理器 (支持单次及滚动训练调用)
-│   │   └── xgb_model.py        # XGBoost 模型封装 (支持 GPU/Hist 模式)
+│   │   ├── xgb_model.py        # XGBoost 模型封装 (支持 GPU/Hist 模式)
+│   │   └── training_monitor.py # [NEW] TensorBoard 训练监控模块
 │   │
 │   ├── preprocessing/          # 预处理模块
 │   │   ├── pipeline.py         # 特征工程总流水线 (含 Row-level 过滤)
@@ -137,6 +136,7 @@ Quant_A_SHARE_V2.0/
 ├── figures/ (自动生成)          # 分析图表 (.png)
 ├── reports/ (自动生成)          # 分析报告 & 每日推荐 (.csv)
 ├── logs/                       # 运行日志
+│   └── tensorboard/            # [NEW] TensorBoard 训练监控日志
 │
 ├── architecture.md             # 架构设计说明
 ├── README.md                   # 项目说明文档
@@ -507,36 +507,65 @@ python scripts/signal_diagnosis.py
 ---
 # 5. 训练模型 (Model Training)
 
-执行以下命令，基于生成的特征矩阵训练预测模型：
+本项目支持两种训练模式：**单次训练**（快速测试）和 **滚动训练 (Walk-Forward)**（推荐生产使用）。
+
+### 5.1 滚动训练 (推荐)
+
+模拟真实时间流逝，每年重新训练模型，生成无未来函数污染的预测集：
 
 ```bash
-python scripts/train_model.py
+python scripts/model_train/run_walkforward.py
 ```
-**核心逻辑**：
 
- 1. **读取数据**：自动加载 `data/processed/all_stocks.parquet` 全量特征数据。
+**核心机制**：
+- 按年滚动：例如用 2010-2018 年数据训练，预测 2019 年；再用 2010-2019 年数据训练，预测 2020 年...
+- 支持 **扩张窗口** (Expanding) 或 **滚动窗口** (Rolling) 两种模式
+- 每年自动保存独立模型，最终合并为全量预测表
 
- 2. **时序切分**：根据 `config/main.yaml` 中的 `train_val_split_date`（如 2019-01-01）将数据划分为训练集和验证集，严防未来信息泄露。
+### 5.2 单次训练 (快速测试)
 
- 3. **模型训练**：使用配置中的超参数训练 **XGBoost** 模型。
+```bash
+python scripts/model_train/train_model.py
+```
 
- 4. **生成预测**：对全量数据（训练集+验证集）生成预测分数，方便后续分析历史拟合情况。
+### 5.3 训练监控 (TensorBoard) 🆕
 
- 5. **版本归档**：自动生成带时间戳的版本目录（如 `20231201_100000`），保存模型产物。
+训练过程自动记录到 TensorBoard，支持可视化监控：
+
+```bash
+# 启动 TensorBoard
+python scripts/tools/start_tensorboard.py
+```
+
+访问 http://localhost:6006 可查看：
+- 📈 **训练/验证损失曲线** - 判断是否过拟合
+- 🎯 **特征重要性排名** - 了解模型关注点
+- ⚙️ **超参数配置** - 方便对比实验
+
+### 5.4 特征筛选 🆕
+
+自动分析并筛选有效特征，移除低 IC 和冗余特征：
+
+```bash
+python scripts/analisis/feature_selector.py
+```
+
+启用方法：在 `config/main.yaml` 中设置 `use_feature_selection: true`
 
 **配置说明 (`config/main.yaml`)**：
 
-- `model.label_col`: 目标标签列名（默认 `label`，对应 feature engineering 阶段生成的 `label_5d` 等）。
-
-- `model.params`: XGBoost 核心参数（`learning_rate`, `max_depth`, `n_estimators` 等）。
-
-- `model.train_val_split_date`: 训练/验证集切分日期。
+| 参数 | 说明 |
+|------|------|
+| `model.label_col` | 目标标签列名 |
+| `model.params` | XGBoost 超参数 |
+| `model.early_stopping_rounds` | 早停耐心 |
+| `model.enable_tensorboard` | 是否启用监控 |
+| `model.use_feature_selection` | 是否启用特征筛选 |
 
 **输出产物 (`data/models/{version}/`)**：
 
-- `model.json`: 训练好的模型文件（可用于后续加载和推理）。
-
-- `predictions.parquet`: 包含 `date`, `symbol`, `close`, `label`, `pred_score` 的预测结果表，是下一步回测的直接输入。
+- `model.json` / `model_YYYY.json`: 模型文件
+- `predictions.parquet`: 预测结果表
 
 ---
 
@@ -594,24 +623,30 @@ python scripts/run_backtest.py
 
 ---
 
-# 📌 未来计划 (Roadmap)
+# 📌 已完成功能 & 未来计划
 
-我们计划在后续版本中逐步引入以下高级特性，进一步提升系统的实战能力：
+### ✅ 已完成 (V2.0)
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| Walk-Forward 滚动训练 | ✅ | 按年滚动，无未来函数 |
+| TensorBoard 训练监控 | ✅ | 损失曲线、特征重要性可视化 |
+| 特征筛选 | ✅ | 基于 IC 和相关性自动筛选 |
+| 正则化优化 | ✅ | L1/L2 正则化、参数调优 |
+| 压力测试 | ✅ | 成本敏感性、熊市生存测试 |
+
+### 🚀 未来计划
 
 * **P1 (近期): 可视化增强**
-    * 增加回测结果的交互式图表 (HTML 报告)。
-    * 提供特征重要性 (Feature Importance) 与 SHAP 值分析，提升模型可解释性。
-* **P2 (中期): 进阶回测体系**
-    * 引入 **Walk-Forward Analysis (滚动回测)**，评估策略在时间推移下的稳定性。
-    * 引入 **Monte Carlo (蒙特卡洛模拟)**，评估策略在极端市场环境下的风险边界。
+    * 增加回测结果的交互式 HTML 报告
+    * SHAP 值分析，提升模型可解释性
+* **P2 (中期): 策略增强**
+    * 引入 **Monte Carlo 模拟**，评估极端风险
+    * 多模型融合 (XGBoost + LightGBM + CatBoost)
 * **P3 (远期): 深度学习与实盘**
-    * 接入 LSTM / Transformer 等时序深度学习模型。
-    * 开发 **Live Engine**，对接实盘/模拟盘 API，实现信号自动下单。
-    * 构建 Web Dashboard，实现从命令行工具到图形化平台的升级。
-
----
-# 操作流程图
-
+    * 接入 LSTM / Transformer 时序模型
+    * 开发 **Live Engine**，对接实盘 API
+    * 构建 Web Dashboard 管理平台
 
 ---
 
