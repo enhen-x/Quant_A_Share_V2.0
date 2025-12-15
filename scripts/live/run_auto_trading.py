@@ -132,6 +132,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # 默认模拟模式，--real参数切换到真实模式
-    dry_run = args.real
+    dry_run = not args.real
     
     main(dry_run=dry_run)

@@ -66,77 +66,94 @@ Quant_A_SHARE_V2.0/
 ├── docs/                       # [文档] 分析指南
 │   ├── EDA_GUIDE.md            # 探索性数据分析 (EDA) 结果解读指南
 │   ├── FACTOR_ANALYSIS_REPORT.md # 因子有效性与 IC 分析解读指南
-│   └── HORIZON_ANALYSIS_REPORT.md # 预测周期 (Horizon) 敏感性分析解读指南
+│   ├── HORIZON_ANALYSIS_REPORT.md # 预测周期 (Horizon) 敏感性分析解读指南
+│   └── XUEQIU_GUIDE.md         # 雪球实盘交易指南
 │
 ├── scripts/                    # [入口] 命令行执行脚本
-│   ├── init_stock_pool.py      # [Step 0] 初始化股票池与交易日历 (基于 AkShare)
-│   ├── download_data.py        # [Step 1] 批量下载/断点续传行情数据
-│   ├── auto_run.py             # [Step 1+] 全自动挂机下载（含防封控冷却重启逻辑）
-│   ├── update_data.py          # [Daily] 增量更新数据（日历/指数/个股）
-│   ├── clean_and_check.py      # [Step 2] 数据清洗与质检（去重、停牌过滤、僵尸股剔除）
-│   ├── run_eda.py              # [Analysis] 运行全维度探索性分析 (EDA)
-│   ├── rebuild_features.py     # [Step 3] 特征工程流水线 (Features + Labels + Filtering)
-│   ├── check_features.py       # [Analysis] 因子有效性检查 (IC 分析/多重共线性/未来函数检测)
-│   ├── check_time_horizon.py   # [Analysis] 最佳持仓周期分析 (IC Decay)
-│   ├── run_walkforward.py      # [Step 4 - New] 滚动训练 (Walk-Forward Validation)
-│   │                           # 模拟真实时间流逝，每年重新训练模型，生成无未来函数的预测集。
-│   ├── train_model.py          # [Step 4 - Legacy] 单次模型训练 (仅用于快速测试)
-│   ├── run_backtest.py         # [Step 5] 策略回测
-│   │                           # 支持分仓轮动(Periodic)、动态仓位、严谨成交(剔除涨停/高开)。
-│   ├── check_stress_test.py    # [Test - New] 策略压力测试
-│   │                           # 测试策略在不同交易成本及历史极端熊市(如2024微盘股危机)下的生存能力。
-│   └── run_recommendation.py   # [App] 每日推荐 (Daily Picks)
-│                               # 智能寻找最新模型，生成含备选的 Top-K 股票池，自动过滤今日涨停股。
+│   ├── analisis/               # [分析] 数据清洗与分析诊断
+│   │   ├── clean_and_check.py      # [Step 2] 数据清洗与质检（去重、停牌过滤、僵尸股剔除）
+│   │   ├── run_eda.py              # [Analysis] 运行全维度探索性分析 (EDA)
+│   │   ├── check_features.py       # [Analysis] 因子有效性检查 (IC 分析/多重共线性/未来函数检测)
+│   │   ├── check_stress_test.py    # [Test] 策略压力测试 (成本敏感性/历史熊市生存测试)
+│   │   ├── check_time_horizon.py   # [Analysis] 最佳持仓周期分析 (IC Decay)
+│   │   ├── explain_model.py        # [Analysis] 模型可解释性分析 (SHAP)
+│   │   ├── feature_selector.py     # [Tools] 特征筛选工具
+│   │   └── signal_diagnosis.py     # [Diagnosis] 策略信号诊断
+│   │
+│   ├── date_landing/           # [数据] 数据下载与更新
+│   │   ├── init_stock_pool.py      # [Step 0] 初始化股票池与交易日历
+│   │   ├── download_data.py        # [Step 1] 批量下载/断点续传行情数据
+│   │   ├── auto_run.py             # [Step 1+] 全自动挂机下载（含防封控冷却重启逻辑）
+│   │   └── update_data.py          # [Daily] 增量更新数据（日历/指数/个股）
+│   │
+│   ├── feature_create/         # [特征] 特征工程
+│   │   └── rebuild_features.py     # [Step 3] 特征工程流水线 (Features + Labels + Filtering)
+│   │
+│   ├── model_train/            # [模型] 模型训练
+│   │   ├── run_walkforward.py      # [Step 4] 滚动训练 (Walk-Forward) - 推荐
+│   │   └── train_model.py          # [Step 4] 单次模型训练 (Legacy)
+│   │
+│   ├── back_test/              # [回测] 回测与推荐
+│   │   ├── run_backtest.py         # [Step 5] 策略回测 (分仓轮动/动态成本)
+│   │   └── run_recommendation.py   # [App] 每日推荐 (Daily Picks)
+│   │
+│   ├── live/                   # [实盘] 自动交易
+│   │   └── run_auto_trading.py     # [Live] 雪球实盘/模拟自动交易脚本
+│   │
+│   └── tools/                  # [工具] 辅助脚本
+│       └── start_tensorboard.py    # 启动 TensorBoard 训练监控
 │
 ├── src/                        # [源码] 核心逻辑库
 │   ├── analysis/               # 分析引擎模块
 │   │   ├── eda_engine.py       # EDA 绘图与统计核心
 │   │   ├── factor_checker.py   # 因子质量分析器 (IC/RankIC/分布)
-│   │   └── horizon_analyzer.py # 多周期 IC 衰减分析器
+│   │   ├── horizon_analyzer.py # 多周期 IC 衰减分析器
+│   │   └── model_interpreter.py # [New] 模型解释器 (SHAP)
 │   │
 │   ├── backtest/               # 回测模块
 │   │   └── backtester.py       # 向量化回测引擎
-│   │                           # 特性：支持 Periodic/Rolling 轮动、动态成本覆盖、开盘涨停废单逻辑。
 │   │
 │   ├── data_source/            # 数据源适配层 (Facade模式)
-│   │   ├── base.py             # 接口基类
-│   │   ├── datahub.py          # 数据统一调度入口
-│   │   ├── akshare_source.py   # AkShare 接口实现
-│   │   └── baostock_source.py  # Baostock 接口实现
 │   │
 │   ├── model/                  # 机器学习模块
-│   │   ├── trainer.py          # 训练流程管理器 (支持单次及滚动训练调用)
-│   │   ├── xgb_model.py        # XGBoost 模型封装 (支持 GPU/Hist 模式)
-│   │   └── training_monitor.py # [NEW] TensorBoard 训练监控模块
+│   │   ├── trainer.py          # 训练流程管理器
+│   │   ├── xgb_model.py        # XGBoost 模型封装
+│   │   └── training_monitor.py # TensorBoard 训练监控模块
 │   │
 │   ├── preprocessing/          # 预处理模块
-│   │   ├── pipeline.py         # 特征工程总流水线 (含 Row-level 过滤)
-│   │   ├── features.py         # 特征计算工厂 (MA, MACD, RSI, KDJ, BOLL, Vol, Cap...)
-│   │   └── labels.py           # 标签生成工厂 (三相屏障/VWAP/超额收益/一字板剔除)
+│   │   ├── pipeline.py         # 特征工程总流水线
+│   │   ├── features.py         # 特征计算工厂
+│   │   └── labels.py           # 标签生成工厂
 │   │
 │   ├── strategy/               # 策略模块
 │   │   └── signal.py           # 信号生成器
-│   │                           # 特性：TopK 排序 + 双均线动态仓位(Position Control) + 涨停过滤 + 市值风控。
+│   │
+│   ├── live/                   # [New] 实盘交易模块
+│   │   ├── config.py           # 实盘配置管理
+│   │   ├── trade_recorder.py   # 交易记录与报表生成
+│   │   ├── trading_scheduler.py # 调度与资金管理
+│   │   └── xueqiu_broker.py    # 雪球接口封装
 │   │
 │   └── utils/                  # 通用工具库
-│       ├── config.py           # 全局配置加载器 (单例)
+│       ├── config.py           # 全局配置加载器
 │       ├── logger.py           # 日志管理
 │       └── io.py               # 文件读写封装
 │
 ├── data/ (自动生成目录)
 │   ├── raw/                    # 原始行情数据
 │   ├── raw_cleaned/            # 清洗后的标准行情
-│   ├── processed/              # 最终特征矩阵 (all_stocks.parquet)
+│   ├── processed/              # 最终特征矩阵
 │   ├── meta/                   # 股票列表与交易日历
 │   ├── models/                 # 模型仓库
-│   │   ├── WF_YYYYMMDD.../     # 滚动训练生成的年度模型集与全量预测表
+│   │   ├── WF_YYYYMMDD.../     # 滚动训练生成的年度模型集
 │   │   └── YYYYMMDD.../        # 单次训练的模型存档
-│   └── index/                  # 指数数据
+│   ├── index/                  # 指数数据
+│   └── live_trading/           # [New] 实盘交易配置与记录
 │
 ├── figures/ (自动生成)          # 分析图表 (.png)
 ├── reports/ (自动生成)          # 分析报告 & 每日推荐 (.csv)
 ├── logs/                       # 运行日志
-│   └── tensorboard/            # [NEW] TensorBoard 训练监控日志
+│   └── tensorboard/            # TensorBoard 训练监控日志
 │
 ├── architecture.md             # 架构设计说明
 ├── README.md                   # 项目说明文档
