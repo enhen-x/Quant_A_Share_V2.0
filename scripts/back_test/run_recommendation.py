@@ -137,8 +137,33 @@ def main():
 
     # 3. 执行预测
     logger.info(f"正在对 {len(df_slice)} 行数据 ({df_slice['symbol'].nunique()} 只股票) 进行打分...")
-    # 预测分数
-    pred_scores = model.predict(df_slice[feat_cols])
+    
+    # 3.1 特征对齐
+    # 优先使用模型记录的特征名 (如果有)
+    final_features = feat_cols
+    if hasattr(model.model, "feature_names") and model.model.feature_names:
+        model_features = model.model.feature_names
+        logger.info(f"使用模型内置特征列表: {len(model_features)} 个")
+        
+        # 检查缺失特征
+        missing = [f for f in model_features if f not in df_slice.columns]
+        if missing:
+            logger.error(f"严重错误：数据中缺少模型所需的特征: {missing}")
+            logger.error("这通常是由于特征工程配置 (rebuild_features.py) 与模型训练时的配置不一致导致的。")
+            return
+            
+        final_features = model_features
+    else:
+        logger.warning(f"模型未记录特征名，将使用所有 {len(final_features)} 个 'feat_' 开头的列。可能会导致 mismatch 错误。")
+
+    # 3.2 预测分数
+    try:
+        # 确保列顺序与模型一致
+        X_pred = df_slice[final_features]
+        pred_scores = model.predict(X_pred)
+    except Exception as e:
+        logger.error(f"预测失败: {e}")
+        return
     
     # 构造包含历史预测的 DataFrame (用于策略计算平滑分)
     pred_df = df_slice[["date", "symbol"]].copy()
