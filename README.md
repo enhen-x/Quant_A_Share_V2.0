@@ -474,8 +474,8 @@ python scripts/signal_diagnosis.py
  * **成本敏感性**：测试策略在不同交易成本（如 1‰, 2‰, 5‰）下的**夏普比率**衰减，评估策略的实战盈利空间.
 
  <p align="center">
-  <h3 align="center">2‰交易成本下收益</h3>
-  <img src="architecture\test_result\stress_test\cost_20\equity_curve.png" width="600" alt="2‰交易成本下收益">
+  <h3 align="center">不同交易成本下收益</h3>
+  <img src="architecture\test_result\stress_test\cost_sensitivity_comparison.png" width="600" alt="不同交易成本下收益">
  </p>
 
  * **危机压力测试**：在历史极端熊市（如 2018 年、2022 年、2024 年微盘股危机）时间窗口下运行回测，评估策略的**最大回撤**与生存能力.
