@@ -557,7 +557,7 @@ python scripts/tools/start_tensorboard.py
 - 🎯 **特征重要性排名** - 了解模型关注点
 - ⚙️ **超参数配置** - 方便对比实验
 
-### 5.4 特征筛选 🆕
+### 5.4 特征筛选
 
 自动分析并筛选有效特征，移除低 IC 和冗余特征：
 
@@ -566,22 +566,6 @@ python scripts/analisis/feature_selector.py
 ```
 
 启用方法：在 `config/main.yaml` 中设置 `use_feature_selection: true`
-
- ### 5.5 模型可解释性 (SHAP) 🆕
-
-使用 SHAP (SHapley Additive exPlanations) 深入分析模型决策逻辑，了解哪些因子最重要，以及它们如何影响预测结果：
-
- ```bash
-# 自动检测最新模型并分析
-python scripts/analisis/explain_model.py
-
-# 指定模型版本
-python scripts/analisis/explain_model.py --version 20251214_175849
-```
-
-**输出图表 (`figures/interpretation/{version}/`)**：
- - **Summary Plot**: 特征重要性总览，展示因子数值大小与 SHAP 值的正负关系。
- - **Dependence Plot**: 单个特征的依赖图，展示特征值与预测贡献的非线性关系。
 
 **配置说明 (`config/main.yaml`)**：
 
@@ -597,6 +581,22 @@ python scripts/analisis/explain_model.py --version 20251214_175849
 
 - `model.json` / `model_YYYY.json`: 模型文件
 - `predictions.parquet`: 预测结果表
+
+### 5.5 模型可解释性 (SHAP) 🆕
+
+使用 SHAP (SHapley Additive exPlanations) 深入分析模型决策逻辑，了解哪些因子最重要，以及它们如何影响预测结果：
+
+```bash
+# 自动检测最新模型并分析
+python scripts/analisis/explain_model.py
+
+# 指定模型版本
+python scripts/analisis/explain_model.py --version 20251214_175849
+```
+
+**输出图表 (`figures/interpretation/{version}/`)**：
+- **Summary Plot**: 特征重要性总览，展示因子数值大小与 SHAP 值的正负关系。
+- **Dependence Plot**: 单个特征的依赖图，展示特征值与预测贡献的非线性关系。
 
 ---
 
