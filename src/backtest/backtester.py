@@ -171,6 +171,8 @@ class VectorBacktester:
         self._plot_result(equity_curve, benchmark_curve, metrics, output_dir, 
                          title_suffix=f"(Cost={current_cost*1000:.1f}‰)")
         
+        # [修改] 返回 equity_curve 便于外部高级分析
+        metrics["equity_curve"] = equity_curve
         return metrics
 
     def _calc_metrics(self, daily_ret):
