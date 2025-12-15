@@ -524,6 +524,21 @@ python scripts/signal_diagnosis.py
 
 本项目支持两种训练模式：**单次训练**（快速测试）和 **滚动训练 (Walk-Forward)**（推荐生产使用）。
 
+**配置说明 (`config/main.yaml`)**：
+
+| 参数 | 说明 |
+|------|------|
+| `model.label_col` | 目标标签列名 |
+| `model.params` | XGBoost 超参数 |
+| `model.early_stopping_rounds` | 早停耐心 |
+| `model.enable_tensorboard` | 是否启用监控 |
+| `model.use_feature_selection` | 是否启用特征筛选 |
+
+**输出产物 (`data/models/{version}/`)**：
+
+- `model.json` / `model_YYYY.json`: 模型文件
+- `predictions.parquet`: 预测结果表
+
 ### 5.1 滚动训练 (推荐)
 
 模拟真实时间流逝，每年重新训练模型，生成无未来函数污染的预测集：
@@ -567,20 +582,7 @@ python scripts/analisis/feature_selector.py
 
 启用方法：在 `config/main.yaml` 中设置 `use_feature_selection: true`
 
-**配置说明 (`config/main.yaml`)**：
 
-| 参数 | 说明 |
-|------|------|
-| `model.label_col` | 目标标签列名 |
-| `model.params` | XGBoost 超参数 |
-| `model.early_stopping_rounds` | 早停耐心 |
-| `model.enable_tensorboard` | 是否启用监控 |
-| `model.use_feature_selection` | 是否启用特征筛选 |
-
-**输出产物 (`data/models/{version}/`)**：
-
-- `model.json` / `model_YYYY.json`: 模型文件
-- `predictions.parquet`: 预测结果表
 
 ### 5.5 模型可解释性 (SHAP) 🆕
 
