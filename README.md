@@ -457,7 +457,7 @@ python scripts/signal_diagnosis.py
  </p>
 
  <p align="center">
-  <h3 align="center">换手率</h3>
+  <h3 align="center">换仓率</h3>
   <img src="architecture\test_result\signals\20251209_193138\turnover_rate.png" width="600" alt="换手率">
  </p>
 
@@ -468,7 +468,7 @@ python scripts/signal_diagnosis.py
 
  <p align="center">
   <h3 align="center">动量</h3>
-  <img src="architecture\test_result\signals\20251209_193138\momentum_1m_distribution.png" width="600" alt="动量">
+  <img src="architecture\test_result\signals\20251209_193138\momentum_d istribution.png" width="600" alt="动量">
  </p>
 
  * **成本敏感性**：测试策略在不同交易成本（如 1‰, 2‰, 5‰）下的**夏普比率**衰减，评估策略的实战盈利空间.
@@ -493,8 +493,8 @@ python scripts/signal_diagnosis.py
  </p>
 
  <p align="center">
-  <h3 align="center">平均换仓率</h3>
-  <img src="architecture\test_result\signals\20251209_193138\turnover_distribution.png" width="600" alt="平均换仓率">
+  <h3 align="center">换手率</h3>
+  <img src="architecture\test_result\signals\20251209_193138\turnover_distribution.png" width="600" alt="换手率">
  </p>
 
 📊 **产出物位置**： 所有分析生成的**可视化图表**均保存在 `figures/` 目录下（按时间戳归档）,**统计数据表**保存在 `reports/` 目录下.
