@@ -157,14 +157,8 @@ class SignalDiagnosis:
         plt.savefig(os.path.join(self.figure_dir, "volatility_distribution.png"), dpi=120)
         plt.close()
 
-        # 动量分析 - 与全市场对比
-        merged["momentum_1m"] = merged.groupby("symbol")["close"].transform(
-            lambda x: x.pct_change(20) * 100
-        )
-        merged["momentum_3m"] = merged.groupby("symbol")["close"].transform(
-            lambda x: x.pct_change(60) * 100
-        )
-        
+        # 动量分析 - 修正：先在全市场数据上计算动量，再筛选信号股票
+        # 全市场动量计算
         self.all_df_sorted["momentum_1m"] = self.all_df_sorted.groupby("symbol")["close"].transform(
             lambda x: x.pct_change(20) * 100
         )
@@ -172,10 +166,16 @@ class SignalDiagnosis:
             lambda x: x.pct_change(60) * 100
         )
         
-        mom1_sel = merged["momentum_1m"].dropna()
-        mom3_sel = merged["momentum_3m"].dropna()
+        # 通过 merge 筛选信号股票的动量数据（高效方式）
+        signal_subset = self.signal_df[["date", "symbol"]].copy()
+        selected_momentum = self.all_df_sorted.merge(signal_subset, on=["date", "symbol"], how="inner")
+        
+        mom1_sel = selected_momentum["momentum_1m"].dropna()
+        mom3_sel = selected_momentum["momentum_3m"].dropna()
         mom1_all = self.all_df_sorted["momentum_1m"].dropna()
         mom3_all = self.all_df_sorted["momentum_3m"].dropna()
+        
+        print(f"[调试] 信号数据量: {len(signal_subset)}, 匹配动量数据: {len(selected_momentum)}")
         
         mom1 = mom1_sel.median()
         mom3 = mom3_sel.median()
