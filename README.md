@@ -468,7 +468,7 @@ python scripts/signal_diagnosis.py
 
  <p align="center">
   <h3 align="center">动量</h3>
-  <img src="architecture\test_result\signals\20251209_193138\momentum_d istribution.png" width="600" alt="动量">
+  <img src="architecture\test_result\signals\20251209_193138\momentum_distribution.png" width="600" alt="动量">
  </p>
 
  * **成本敏感性**：测试策略在不同交易成本（如 1‰, 2‰, 5‰）下的**夏普比率**衰减，评估策略的实战盈利空间.
