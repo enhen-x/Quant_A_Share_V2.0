@@ -106,22 +106,22 @@ class SignalDiagnosis:
         plt.savefig(os.path.join(self.figure_dir, "price_distribution.png"))
         plt.close()
 
-        # 波动率分析 - 与全市场对比
-        merged = merged.sort_values(by=["symbol", "date"])
-        merged["volatility"] = merged.groupby("symbol")["close"].transform(
+        # 波动率分析 - 修正：先在全市场数据上计算波动率，再筛选信号股票
+        self.all_df_sorted = self.all_df.sort_values(by=["symbol", "date"])
+        self.all_df_sorted["volatility"] = self.all_df_sorted.groupby("symbol")["close"].transform(
             lambda x: x.pct_change().rolling(60).std() * 100  # 转换为百分比
         )
         
-        # 同时计算全市场波动率作为对比
-        self.all_df_sorted = self.all_df.sort_values(by=["symbol", "date"])
-        self.all_df_sorted["volatility"] = self.all_df_sorted.groupby("symbol")["close"].transform(
-            lambda x: x.pct_change().rolling(60).std() * 100
-        )
+        # 通过 merge 筛选信号股票的波动率数据
+        signal_subset = self.signal_df[["date", "symbol"]].copy()
+        selected_vol = self.all_df_sorted.merge(signal_subset, on=["date", "symbol"], how="inner")
         
-        vol_selected = merged["volatility"].dropna()
+        vol_selected = selected_vol["volatility"].dropna()
         vol_all = self.all_df_sorted["volatility"].dropna()
         median_vol = vol_selected.median()
         median_vol_all = vol_all.median()
+        
+        print(f"[调试] 波动率 - 信号数据量: {len(signal_subset)}, 匹配数据: {len(selected_vol)}, 非空: {len(vol_selected)}")
         
         vol_diff = median_vol - median_vol_all
         self.log(f"- 波动率中位数（60日）：{median_vol:.2f}% (全市场: {median_vol_all:.2f}%, 差异: {vol_diff:+.2f}%)")
