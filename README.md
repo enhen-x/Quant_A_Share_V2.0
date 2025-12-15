@@ -566,24 +566,22 @@ python scripts/analisis/feature_selector.py
 ```
 
 启用方法：在 `config/main.yaml` 中设置 `use_feature_selection: true`
-569: 
-570: ### 5.5 模型可解释性 (SHAP) 🆕
-571: 
-572: 使用 SHAP (SHapley Additive exPlanations) 深入分析模型决策逻辑，了解哪些因子最重要，以及它们如何影响预测结果：
-573: 
-574: ```bash
-575: # 自动检测最新模型并分析
-576: python scripts/analisis/explain_model.py
-577: 
-578: # 指定模型版本
-579: python scripts/analisis/explain_model.py --version 20251214_175849
-580: ```
-581: 
-582: **输出图表 (`figures/interpretation/{version}/`)**：
-583: - **Summary Plot**: 特征重要性总览，展示因子数值大小与 SHAP 值的正负关系。
-584: - **Dependence Plot**: 单个特征的依赖图，展示特征值与预测贡献的非线性关系。
-585: 
-586: **配置说明 (`config/main.yaml`)**：
+
+ ### 5.5 模型可解释性 (SHAP) 🆕
+
+使用 SHAP (SHapley Additive exPlanations) 深入分析模型决策逻辑，了解哪些因子最重要，以及它们如何影响预测结果：
+
+ ```bash
+# 自动检测最新模型并分析
+python scripts/analisis/explain_model.py
+
+# 指定模型版本
+python scripts/analisis/explain_model.py --version 20251214_175849
+```
+
+**输出图表 (`figures/interpretation/{version}/`)**：
+ - **Summary Plot**: 特征重要性总览，展示因子数值大小与 SHAP 值的正负关系。
+ - **Dependence Plot**: 单个特征的依赖图，展示特征值与预测贡献的非线性关系。
 
 **配置说明 (`config/main.yaml`)**：
 
