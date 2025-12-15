@@ -3,6 +3,7 @@
 import os
 import sys
 import pandas as pd
+import numpy as np
 import datetime
 import matplotlib.pyplot as plt
 
@@ -79,10 +80,18 @@ def main():
     cost_results = []
     equity_curves = {} # 用于保存所有曲线以便画汇总图
     
+    # [Restored] 预先加载并切割好 benchmark
+    idx_code = GLOBAL_CONFIG.get("preprocessing", {}).get("labels", {}).get("index_code", "000300.SH")
+    idx_file = os.path.join(GLOBAL_CONFIG["paths"]["data_raw"], f"index_{idx_code.replace('.', '')}.parquet")
+    benchmark_series = None
+    if os.path.exists(idx_file):
+        idx_df = read_parquet(idx_file)
+        idx_df["date"] = pd.to_datetime(idx_df["date"])
+        idx_df = idx_df.set_index("date")["close"].sort_index()
+        benchmark_series = idx_df
+    
     for c in costs:
-        logger.info(f"Testing Cost = {c*1000:.1f}‰ ...")
-        out_path = os.path.join(report_dir, f"cost_{int(c*10000)}")
-    for c in costs:
+
         logger.info(f"Testing Cost = {c*1000:.1f}‰ ...")
         out_path = os.path.join(report_dir, f"cost_{int(c*10000)}")
         
@@ -99,25 +108,44 @@ def main():
             "Sharpe": metrics["sharpe"]
         })
 
-    # --- 绘制成本敏感性汇总对比图 ---
+    # --- 绘制成本敏感性汇总对比图 (Log Scale + Benchmark) ---
     if equity_curves:
-        plt.figure(figsize=(12, 7))
+        plt.figure(figsize=(12, 8))
         
-        # 绘制基准 (Benchmark) - 只画一次
-        # 从最后一条曲线中尝试提取基准时间段（通常所有曲线时间轴一致）
-        # 这里为了简单，我们直接画各个 Cost 的曲线，基准可画可不画，重点是看 Cost 的衰减
+        # 1. 确定统一的时间范围
+        # 取第一个非空曲线的时间索引
+        first_curve = next(iter(equity_curves.values()))
+        start_date = first_curve.index[0]
+        end_date = first_curve.index[-1]
         
-        for label, curve in equity_curves.items():
-            curve.plot(label=label, linewidth=2, alpha=0.8)
+        # 2. 绘制基准 (Benchmark)
+        if benchmark_series is not None:
+            # 截取对应时间段
+            bench_slice = benchmark_series.truncate(before=start_date, after=end_date)
+            if not bench_slice.empty:
+                # 归一化：从 1.0 开始
+                bench_norm = bench_slice / bench_slice.iloc[0]
+                bench_norm.plot(label=f"Benchmark ({idx_code})", color="black", linestyle="--", linewidth=2, alpha=0.6)
+
+        # 3. 绘制不同 Cost 的策略曲线
+        # 使用不同颜色的渐变或区别度高的颜色
+        colors = plt.cm.viridis(np.linspace(0, 0.9, len(equity_curves)))
+        
+        for i, (label, curve) in enumerate(equity_curves.items()):
+            curve.plot(label=label, linewidth=2, alpha=0.9, color=colors[i])
             
-        plt.title("Cost Sensitivity Analysis: Strategy Equity Curves")
+        plt.title("Cost Sensitivity Analysis: Strategy Equity Curves (Log Scale)")
         plt.xlabel("Date")
-        plt.ylabel("Equity")
-        plt.grid(True, linestyle="--", alpha=0.5)
+        plt.ylabel("Equity (Log Scale)")
+        plt.grid(True, linestyle="--", alpha=0.5, which='both') # box grid
         plt.legend(loc="upper left")
+        plt.yscale('log') # 设置对数坐标
         
-        # 使用 Log Scale 小图嵌入或直接画 Log 轴？
-        # 这里直接画线性轴为主，用户主要看净值差异
+        # 调整 y 轴显示的 format，避免纯科学计数法
+        from matplotlib.ticker import ScalarFormatter
+        plt.gca().yaxis.set_major_formatter(ScalarFormatter())
+        
+        plt.tight_layout()
         plt.savefig(os.path.join(report_dir, "cost_sensitivity_comparison.png"), dpi=120)
         plt.close()
 
@@ -132,11 +160,12 @@ def main():
     # 场景二：极端熊市生存测试 (Crisis Survival)
     # ==========================================
     logger.info("\n>>> 场景 2: 极端熊市生存测试")
+    # [优化] 仅选择数据覆盖范围内 (2019-2025) 的重大市场风险事件
     crisis_periods = {
-        "2015 Crash":     ("2015-06-01", "2016-02-29"), # 股灾+熔断
-        "2018 Trade War": ("2018-01-01", "2018-12-31"),
-        "2022 Fed Hike":  ("2022-01-01", "2022-12-31"),
-        "2024 Liquidity": ("2024-01-01", "2024-04-30")  # 微盘股崩盘(延长至4月)
+        "2020 Covid-19":  ("2020-01-20", "2020-03-31"), # 疫情爆发
+        "2021 Bubble Burst": ("2021-02-18", "2021-12-31"), # 核心资产泡沫破裂
+        "2022 Fed Hike":  ("2022-01-01", "2022-12-31"), # 美联储加息+俄乌战争
+        "2023-2024 Bear": ("2023-01-01", "2024-02-05")  # 长期阴跌+微盘股流动性危机
     }
     
     crisis_results = []
