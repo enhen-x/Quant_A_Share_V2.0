@@ -685,6 +685,62 @@ python scripts/analisis/signal_diagnosis.py
 
 ---
 
+# 7. 实盘自动交易 (Live Trading) 🆕
+
+本项目已集成 **雪球 (Xueqiu)** 组合交易接口，支持从每日推荐到自动下单的全流程自动化。
+
+### 7.1 环境准备
+
+1. **安装依赖**：
+   ```bash
+   pip install easytrader schedule
+   ```
+
+2. **获取雪球 Cookies**：
+   - 登录 [雪球网页版](https://xueqiu.com)。
+   - 按 F12 打开开发者工具，刷新页面。
+   - 在 Network 面板找到任意请求，复制 `Cookie` 字段的值。
+
+3. **配置文件**：
+   创建 `data/live_trading/config.txt`，格式如下：
+   ```text
+   # 雪球配置
+   [xueqiu]
+   portfolio_code = ZHxxxxxx  # 你的雪球组合代码
+   cookies = 你的雪球Cookies... # 必须包含 xq_a_token
+
+   # 交易配置
+   [trading]
+   initial_capital = 1000000  # 初始资金
+   max_stocks_per_day = 5     # 每日最大买入股票数
+   hold_days = 5              # 持仓天数
+   daily_budget_fraction = 5 # 每日资金分配比例 (1/5)
+   ```
+
+### 7.2 核心功能
+
+*   **智能调度**：自动读取最新的 `Daily Picks` 推荐列表。
+*   **资金管理**：基于滚动资金池（Rolling Budget）计算每日可用资金，等权分配。
+*   **双重去重**：结合 **雪球真实持仓** 和 **本地交易记录**，防止重复买入。
+*   **自动调仓**：调用雪球 `adjust_weight` 接口，一键完成多只股票的买入/调仓。
+*   **交易记录**：自动记录买入明细（股数、价格、时间），生成可视化 CSV 报表。
+
+### 7.3 运行方式
+
+**模拟测试 (Dry Run)**：
+验证逻辑，不实际下单。
+```bash
+python scripts/live/run_auto_trading.py
+```
+
+**实盘运行 (Live)**：
+实际连接账户并执行交易指令。
+```bash
+python scripts/live/run_auto_trading.py --real
+```
+
+---
+
 # 📌 已完成功能 & 未来计划
 
 ### ✅ 已完成 (V2.0)
@@ -697,6 +753,7 @@ python scripts/analisis/signal_diagnosis.py
 | 正则化优化 | ✅ | L1/L2 正则化、参数调优 |
 | 压力测试 | ✅ | 成本敏感性、熊市生存测试 |
 | 模型可解释性 (SHAP) | ✅ | 特征贡献度分析、依赖图 |
+| 实盘自动交易 (Live Trading) | ✅ | 对接雪球组合，全自动下单 |
 
 ### 🚀 未来计划
 
@@ -706,9 +763,8 @@ python scripts/analisis/signal_diagnosis.py
 * **P2 (中期): 策略增强**
     * 引入 **Monte Carlo 模拟**，评估极端风险
     * 多模型融合 (XGBoost + LightGBM + CatBoost)
-* **P3 (远期): 深度学习与实盘**
+* **P3 (远期): 深度学习生态**
     * 接入 LSTM / Transformer 时序模型
-    * 开发 **Live Engine**，对接实盘 API
     * 构建 Web Dashboard 管理平台
 
 ---

@@ -53,3 +53,10 @@ output/
 tmp/
 cache/
 "reports/" 
+
+# Live Trading - 实盘交易（敏感信息）
+config/xueqiu_account.txt
+config/broker_account.json
+data/live_trading/*
+!data/live_trading/.gitkeep
+
