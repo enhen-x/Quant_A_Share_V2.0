@@ -124,7 +124,10 @@ class FactorChecker:
             save_csv(df_stats, os.path.join(self.output_dir, "label_stats.csv"))
 
     def check_ic(self, df: pd.DataFrame):
-        """3. IC 分析 (特征有效性 / 泄露检测)"""
+        """3. IC 分析 (特征有效性 / 泄露检测)
+        
+        改进: 按日期分组计算日度 IC，然后取均值和标准差计算 IC_IR
+        """
         logger.info(">>> 3. 执行 IC 分析 (Information Coefficient)...")
         
         if not self.label_cols or not self.feat_cols:
@@ -134,51 +137,125 @@ class FactorChecker:
         target_label = "label" if "label" in df.columns else self.label_cols[0]
         logger.info(f"当前 IC 分析目标标签: {target_label}")
         
-        # 准备数据 (Dropna)
+        # 确保有日期列
+        if "date" not in df.columns:
+            logger.warning("未找到 date 列，使用整体相关性计算")
+            self._check_ic_simple(df, target_label)
+            return
+        
+        # 按日期分组计算日度 IC
+        logger.info("使用日度分组 IC 计算方法 (更准确)...")
+        
+        ic_results = []
+        
+        for feat in self.feat_cols:
+            # 计算每日的 IC (Spearman RankIC 更稳健)
+            daily_ic = df.groupby("date").apply(
+                lambda x: x[feat].corr(x[target_label], method="spearman") 
+                if x[feat].notna().sum() > 10 else np.nan
+            ).dropna()
+            
+            if len(daily_ic) < 30:  # 至少30天数据
+                continue
+            
+            # 计算 IC 统计量
+            ic_mean = daily_ic.mean()
+            ic_std = daily_ic.std()
+            ic_ir = ic_mean / ic_std if ic_std > 0 else 0  # IC 信息比率
+            ic_positive_ratio = (daily_ic > 0).mean()  # IC 正比例
+            
+            ic_results.append({
+                "Feature": feat,
+                "IC_Mean": ic_mean,
+                "IC_Std": ic_std,
+                "IC_IR": ic_ir,
+                "IC_Positive_Ratio": ic_positive_ratio,
+                "Days": len(daily_ic)
+            })
+        
+        if not ic_results:
+            logger.warning("无法计算日度 IC，回退到整体相关性")
+            self._check_ic_simple(df, target_label)
+            return
+            
+        df_ic = pd.DataFrame(ic_results)
+        df_ic["AbsIC"] = df_ic["IC_Mean"].abs()
+        df_ic = df_ic.sort_values("AbsIC", ascending=False)
+        
+        # 保存 IC 报告
+        save_csv(df_ic, os.path.join(self.output_dir, "feature_ic_report.csv"))
+        
+        # 打印报告
+        print("\n" + "=" * 60)
+        print("特征 IC 分析报告 (日度分组)")
+        print("=" * 60)
+        print(f"{'Feature':<20} {'IC_Mean':>10} {'IC_Std':>10} {'IC_IR':>8} {'正向比例':>8}")
+        print("-" * 60)
+        for _, row in df_ic.head(15).iterrows():
+            print(f"{row['Feature']:<20} {row['IC_Mean']:>10.4f} {row['IC_Std']:>10.4f} {row['IC_IR']:>8.2f} {row['IC_Positive_Ratio']:>8.1%}")
+        print("=" * 60)
+        
+        # 画图: IC 均值柱状图 (Top 30)
+        plt.figure(figsize=(12, 8))
+        df_plot = df_ic.head(min(30, len(df_ic)))
+        
+        colors = ["green" if x > 0 else "red" for x in df_plot["IC_Mean"]]
+        
+        bars = plt.barh(df_plot["Feature"], df_plot["IC_Mean"], color=colors, alpha=0.7)
+        
+        # 添加 IC_IR 标注
+        for i, (_, row) in enumerate(df_plot.iterrows()):
+            ir_text = f"IR={row['IC_IR']:.2f}"
+            x_pos = row["IC_Mean"] + 0.002 if row["IC_Mean"] > 0 else row["IC_Mean"] - 0.002
+            ha = 'left' if row["IC_Mean"] > 0 else 'right'
+            plt.text(x_pos, i, ir_text, va='center', ha=ha, fontsize=8, color='gray')
+        
+        plt.axvline(0, color="k", linestyle="--", linewidth=0.8)
+        plt.xlabel("IC Mean (日度 Spearman RankIC 均值)")
+        plt.ylabel("Feature")
+        plt.title(f"Top Features by IC (Target: {target_label})\nIC_IR = IC_Mean / IC_Std，越大越稳定")
+        plt.gca().invert_yaxis()  # 最重要的在上面
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.figure_dir, "feature_ic_top30.png"), dpi=150)
+        plt.close()
+        
+        # 泄露预警
+        suspicious = df_ic[df_ic["AbsIC"] > 0.3]
+        if not suspicious.empty:
+            logger.error(f"警告：发现 {len(suspicious)} 个特征 IC > 0.3，疑似未来函数泄露！")
+        
+        # IC 因子表现总结
+        strong_factors = df_ic[(df_ic["AbsIC"] > 0.02) & (df_ic["IC_IR"].abs() > 0.5)]
+        logger.info(f"有效因子数量 (|IC|>0.02 且 |IC_IR|>0.5): {len(strong_factors)}")
+    
+    def _check_ic_simple(self, df: pd.DataFrame, target_label: str):
+        """简单 IC 计算 (整体相关性，作为后备)"""
         valid_df = df[[target_label] + self.feat_cols].dropna()
         if valid_df.empty:
             logger.warning("有效数据为空，无法计算 IC。")
             return
         
         ic_list = []
-        
         for feat in self.feat_cols:
-            # Pearson IC
             ic = valid_df[feat].corr(valid_df[target_label])
-            # Rank IC (Spearman)
             rank_ic = valid_df[feat].corr(valid_df[target_label], method="spearman")
-            
             ic_list.append({"Feature": feat, "IC": ic, "RankIC": rank_ic})
             
         df_ic = pd.DataFrame(ic_list).sort_values(by="IC", ascending=False)
-        
-        # 保存 IC 报告
         save_csv(df_ic, os.path.join(self.output_dir, "feature_ic_report.csv"))
         
-        # 打印部分信息
-        print("\n=== Top 5 Positive IC ===")
-        print(df_ic.head(5))
-        print("\n=== Top 5 Negative IC ===")
-        print(df_ic.tail(5))
-        
-        # 画图: IC 柱状图 (Top 30)
+        # 画图
         plt.figure(figsize=(10, 8))
         df_plot = df_ic.copy()
         df_plot["AbsIC"] = df_plot["IC"].abs()
         df_plot = df_plot.sort_values("AbsIC", ascending=False).head(30)
         
-        # [Fix] 增加 hue="Feature" 并设置 legend=False 以消除 FutureWarning
         sns.barplot(x="IC", y="Feature", data=df_plot, hue="Feature", palette="viridis", legend=False)
         plt.title(f"Top 30 Features by IC (Target: {target_label})")
         plt.axvline(0, color="k", linestyle="--")
         plt.tight_layout()
         plt.savefig(os.path.join(self.figure_dir, "feature_ic_top30.png"))
         plt.close()
-        
-        # 泄露预警
-        suspicious = df_ic[df_ic["IC"].abs() > 0.8]
-        if not suspicious.empty:
-            logger.error(f"警告：发现 {len(suspicious)} 个特征 IC > 0.8，疑似未来函数泄露！请检查 feature_ic_report.csv")
 
     def check_correlation(self, df: pd.DataFrame):
         """4. 特征共线性检查"""

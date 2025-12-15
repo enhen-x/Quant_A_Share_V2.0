@@ -65,23 +65,29 @@ class SignalDiagnosis:
         self.report_lines.append(text)
 
     def analyze_risk_exposure(self):
+        """风险暴露分析 - 修复单位问题"""
         merged = self.signal_df.merge(self.all_df, on=["date", "symbol"], how="left")
 
         self.log("## 风险暴露分析\n")
 
+        # 换手率分析 (注意：turnover 数据是百分比形式，如 1.5 表示 1.5%)
         liquidity = merged["turnover"]
         median_turnover = liquidity.median()
-        self.log(f"- 中位换手率：{median_turnover:.2%}")
-        if median_turnover < 0.01:
+        # 直接使用数值，不用 % 格式化（因为已经是百分比）
+        self.log(f"- 中位换手率：{median_turnover:.2f}%")
+        if median_turnover < 1.0:  # 小于 1% 表示流动性风险
             self.log("  - ⚠️ 警告：换手率偏低，存在流动性风险")
         
         plt.figure()
         sns.histplot(liquidity.dropna(), bins=50, color="blue")
-        plt.axvline(x=0.01, color='r', linestyle='--')
+        plt.axvline(x=1.0, color='r', linestyle='--', label='1% 阈值')
+        plt.xlabel("换手率 (%)")
         plt.title("换手率分布（选股股票）")
+        plt.legend()
         plt.savefig(os.path.join(self.figure_dir, "turnover_distribution.png"))
         plt.close()
 
+        # 价格分析
         prices = merged["close"]
         median_price = prices.median()
         low_price_ratio = (prices < 5).mean()
@@ -90,38 +96,61 @@ class SignalDiagnosis:
             self.log("  - ⚠️ 警告：低价股比例偏高")
 
         plt.figure()
-        sns.histplot(prices.dropna(), bins=50, color="purple")
-        plt.axvline(x=5, color='r', linestyle='--')
+        # 裁剪极端值以便更好显示
+        plot_prices = prices[(prices > 0) & (prices < prices.quantile(0.99))]
+        sns.histplot(plot_prices.dropna(), bins=50, color="purple")
+        plt.axvline(x=5, color='r', linestyle='--', label='5元阈值')
+        plt.xlabel("价格 (元)")
         plt.title("价格分布（选股股票）")
+        plt.legend()
         plt.savefig(os.path.join(self.figure_dir, "price_distribution.png"))
         plt.close()
 
+        # 波动率分析
         merged = merged.sort_values(by=["symbol", "date"])
-        merged["volatility"] = merged.groupby("symbol")["close"].transform(lambda x: x.pct_change().rolling(60).std())
+        merged["volatility"] = merged.groupby("symbol")["close"].transform(
+            lambda x: x.pct_change().rolling(60).std() * 100  # 转换为百分比
+        )
         vol = merged["volatility"]
         median_vol = vol.median()
-        self.log(f"- 波动率中位数（60日）：{median_vol:.2%}")
+        self.log(f"- 波动率中位数（60日）：{median_vol:.2f}%")
 
         plt.figure()
-        sns.histplot(vol.dropna(), bins=50, color="orange")
+        # 裁剪极端值
+        plot_vol = vol[(vol > 0) & (vol < vol.quantile(0.99))]
+        sns.histplot(plot_vol.dropna(), bins=50, color="orange")
+        plt.xlabel("日波动率 (%)")
         plt.title("历史收益波动率分布（选股股票）")
         plt.savefig(os.path.join(self.figure_dir, "volatility_distribution.png"))
         plt.close()
 
-        merged["momentum_1m"] = merged.groupby("symbol")["close"].transform(lambda x: x.pct_change(20))
-        merged["momentum_3m"] = merged.groupby("symbol")["close"].transform(lambda x: x.pct_change(60))
+        # 动量分析
+        merged["momentum_1m"] = merged.groupby("symbol")["close"].transform(
+            lambda x: x.pct_change(20) * 100  # 转换为百分比
+        )
+        merged["momentum_3m"] = merged.groupby("symbol")["close"].transform(
+            lambda x: x.pct_change(60) * 100  # 转换为百分比
+        )
         mom1 = merged["momentum_1m"].median()
         mom3 = merged["momentum_3m"].median()
-        self.log(f"- 动量中位数：1月={mom1:.2%}，3月={mom3:.2%}")
+        self.log(f"- 动量中位数：1月={mom1:.2f}%，3月={mom3:.2f}%")
 
         plt.figure()
-        sns.histplot(merged["momentum_1m"].dropna(), bins=50, color="green")
+        plot_mom = merged["momentum_1m"].dropna()
+        plot_mom = plot_mom[(plot_mom > plot_mom.quantile(0.01)) & (plot_mom < plot_mom.quantile(0.99))]
+        sns.histplot(plot_mom, bins=50, color="green")
+        plt.axvline(x=0, color='k', linestyle='--')
+        plt.xlabel("收益率 (%)")
         plt.title("近1个月收益分布")
         plt.savefig(os.path.join(self.figure_dir, "momentum_1m_distribution.png"))
         plt.close()
 
         plt.figure()
-        sns.histplot(merged["momentum_3m"].dropna(), bins=50, color="teal")
+        plot_mom3 = merged["momentum_3m"].dropna()
+        plot_mom3 = plot_mom3[(plot_mom3 > plot_mom3.quantile(0.01)) & (plot_mom3 < plot_mom3.quantile(0.99))]
+        sns.histplot(plot_mom3, bins=50, color="teal")
+        plt.axvline(x=0, color='k', linestyle='--')
+        plt.xlabel("收益率 (%)")
         plt.title("近3个月收益分布")
         plt.savefig(os.path.join(self.figure_dir, "momentum_3m_distribution.png"))
         plt.close()
