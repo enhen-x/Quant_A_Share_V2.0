@@ -478,11 +478,26 @@ python scripts/signal_diagnosis.py
   <img src="architecture\test_result\stress_test\cost_sensitivity_comparison.png" width="600" alt="不同交易成本下收益">
  </p>
 
- * **危机压力测试**：在历史极端熊市（如 2018 年、2022 年、2024 年微盘股危机）时间窗口下运行回测，评估策略的**最大回撤**与生存能力.
+ * **危机压力测试**：在历史极端熊市（如 **2020年疫情**、**2021年核心资产破裂**、**2022年加息熊市**、**2023-24年微盘股/流动性危机**）时间窗口下运行回测，评估策略的**最大回撤**与生存能力.
 
  <p align="center">
-  <h3 align="center">2022年熊市收益</h3>
-  <img src="architecture\test_result\stress_test\crisis_2022_Fed_Hike\equity_curve.png" width="600" alt="2022年熊市收益">
+  <h3 align="center">2020年疫情爆发 (V型反转)</h3>
+  <img src="architecture\test_result\stress_test\crisis_2020_Covid-19\equity_curve.png" width="600" alt="2020年疫情">
+ </p>
+
+ <p align="center">
+  <h3 align="center">2021年核心资产泡沫破裂</h3>
+  <img src="architecture\test_result\stress_test\crisis_2021_Bubble_Burst\equity_curve.png" width="600" alt="2021年泡沫破裂">
+ </p>
+
+ <p align="center">
+  <h3 align="center">2022年美联储加息熊市</h3>
+  <img src="architecture\test_result\stress_test\crisis_2022_Fed_Hike\equity_curve.png" width="600" alt="2022年加息熊市">
+ </p>
+
+ <p align="center">
+  <h3 align="center">2023-2024年漫长阴跌与微盘股危机</h3>
+  <img src="architecture\test_result\stress_test\crisis_2023-2024_Bear\equity_curve.png" width="600" alt="2023-24年阴跌">
  </p>
 
  * **信号质量**：分析**月度 IC 稳定性** (IC IR) 和**平均换仓率**，评估信号的长期有效性与稳定性.
