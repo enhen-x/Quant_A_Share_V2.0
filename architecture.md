@@ -1,5 +1,10 @@
-Quant_A_Share_V2.0 架构说明（architecture）
-1. 项目定位与目标
+# Quant_A_Share_V2.0 架构说明（architecture）
+
+> 最后更新: 2025-12-15 | 版本: V2.1
+
+---
+
+## 1. 项目定位与目标
 
 Quant_A_Share_V2.0 的定位是：
 
@@ -56,19 +61,19 @@ docs/
 负责面向“个人用户”的推荐输出与脚本入口（如每日推荐、一次性回测、walk-forward 等）。
 
 3. 模块说明
-3.1 config/ — 配置中心
+### 3.1 config/ — 配置中心
 
-paths.yaml：数据、模型、日志等路径配置。
+项目使用单一配置文件 `config/main.yaml`，包含以下主要配置模块：
 
-data_config.yaml：数据源、股票池、更新策略（全量/增量）等配置。
+- **paths**：数据、模型、日志等路径配置
+- **data_source**：数据源选择（baostock/akshare）
+- **stock_pool**：股票池过滤规则（排除ST、科创板等）
+- **preprocessing**：特征工程、标签生成、数据质检参数
+- **model**：XGBoost 模型参数、滚动训练配置、TensorBoard 监控、特征筛选开关
+- **strategy**：选股逻辑、Top-K、风控过滤规则
+- **backtest**：回测窗口、交易成本、轮动模式
 
-model_config.yaml：特征列、标签列、模型参数、训练窗口等。
-
-strategy_config.yaml：选股逻辑、持仓数量、打分方式、调仓频率等。
-
-backtest_config.yaml：回测窗口、交易成本、年化日数、无风险利率等。
-
-原则： 所有可调参数尽量写在 YAML 中，脚本只负责“读配置 + 调用模块”。
+原则：所有可调参数集中在 `main.yaml` 中，脚本只负责"读配置 + 调用模块"。
 
 3.2 data/ — 数据存储
 
@@ -117,23 +122,22 @@ pipeline.py：从 raw 到 all_stocks.parquet 的完整流水线。
 
 标签列：统一以 label_ 前缀命名，如 label_ret_5d, label_excess_5d。
 
-3.5 src/model/ — 模型训练与预测
+### 3.5 src/model/ — 模型训练与预测
 
-trainer.py：训练器，负责：
+**核心模块：**
 
-按 model_config.yaml 选择特征/标签；
+- `trainer.py`：训练器，支持特征筛选，读入数据并训练模型
 
-读入 all_stocks.parquet；
+- `xgb_model.py`：XGBoost 模型封装（GPU/Hist 加速、TensorBoard 回调、早停机制）
 
-拟合模型并保存模型文件；
+- `training_monitor.py` **[NEW]**：TensorBoard 训练监控
+  - 实时记录训练/验证损失曲线
+  - 记录特征重要性和超参数配置
+  - 支持多次实验对比
 
-生成并保存预测结果（predictions.parquet）。
+- `predictor.py`：推断接口
 
-predictor.py：推断接口，从模型 + 新数据生成预测。
-
-xgb_model.py：当前使用的 XGBoost 模型结构与封装。
-
-calibrator.py：可选的概率/分位数校准模块。
+- `calibrator.py`：概率/分位数校准模块
 
 模型输出契约：
 
@@ -192,13 +196,13 @@ backtester.py：回测主逻辑，封装一次完整回测流程：
 
 预测 → 信号 → 风控 → 组合 → 资金曲线 → 指标。
 
-metrics.py：回测指标计算（累计收益、年化收益、波动率、夏普、最大回撤、Calmar、胜率、换手率等）。
+metrics.py：回测指标计算（累计收益、年化收益、波动率、夏普、最大回撤等）。
 
-monte_carlo.py：Monte Carlo 多样化回测（未来完善）。
+monte_carlo.py：Monte Carlo 多样化回测（未来计划）。
 
-walk_forward.py：Walk-forward 滚动训练+验证框架（未来完善）。
+walk_forward.py：Walk-forward 滚动训练 **[已完成]** - 支持扩张窗口/滚动窗口。
 
-event_engine.py：事件驱动回测的基础设施（如需要细粒度撮合，可使用）。
+event_engine.py：事件驱动回测（细粒度撮合）。
 
 核心接口：
 
@@ -363,3 +367,51 @@ python scripts/run_backtest.py --version h5_excess_index_regression
 
 这份 architecture.md 可以作为你之后所有“改代码之前”的参照物：
 新需求出现时，先看它落在这套架构的哪一层、影响哪些契约，再决定是加文件、加配置，还是改现有模块。
+
+---
+
+## 8. 已完成功能 (V2.0 - V2.1)
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 数据下载与清洗 | Done | 多源支持、断点续传、智能质检 |
+| 特征工程 | Done | MA/MACD/RSI/KDJ/BOLL/量价等 |
+| 标签生成 | Done | VWAP计价、超额收益、一字板过滤 |
+| XGBoost 训练 | Done | GPU加速、早停机制 |
+| Walk-Forward 滚动训练 | Done | 按年滚动、无未来函数 |
+| TensorBoard 训练监控 | Done | 损失曲线、特征重要性可视化 |
+| 特征筛选 | Done | 基于 IC 和相关性自动筛选 |
+| 正则化优化 | Done | L1/L2 正则化、参数调优 |
+| 策略回测 | Done | 分仓轮动、成本扣除 |
+| 压力测试 | Done | 成本敏感性、熊市生存测试 |
+| 每日推荐 | Done | 自动选股、涨停过滤 |
+
+---
+
+## 9. 未来计划 (Roadmap)
+
+### P1 (近期优先)
+- SHAP 可解释性分析：输出特征贡献度
+- 交互式回测报告：生成 HTML 格式报告
+- 模型版本对比工具
+
+### P2 (中期计划)
+- Monte Carlo 模拟：评估极端风险
+- 多模型融合：XGBoost + LightGBM + CatBoost
+- 因子挖掘框架
+
+### P3 (远期愿景)
+- 深度学习模型：LSTM / Transformer
+- Live Engine 实盘：对接券商 API
+- Web Dashboard：图形化管理平台
+
+---
+
+## 10. 更新日志
+
+| 日期 | 版本 | 更新内容 |
+|------|------|----------|
+| 2025-12-15 | V2.1 | 添加 TensorBoard 监控、特征筛选、正则化优化 |
+| 2025-12-14 | V2.0 | Walk-Forward 滚动训练、压力测试 |
+| 2025-12-07 | V1.5 | 策略回测、每日推荐 |
+| 2025-12-01 | V1.0 | 初始版本，数据下载与特征工程 |
