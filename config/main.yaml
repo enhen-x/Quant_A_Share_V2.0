@@ -162,7 +162,16 @@ preprocessing:
     max_suspension_rate: 0.3   # 停牌天数超过 10% 则剔除
     min_avg_turnover: 0      # 日均换手率低于 1% 则剔除 (僵尸股)
 
-
+# [新增] 特征中性化配置
+  neutralization:
+    enable: true
+    # 风险因子：你想剔除的影响因素（通常是市值、行业哑变量）
+    risk_factors: 
+      - "feat_mcap_log"
+    # 目标特征：'all' 表示除了风险因子外的所有 feat_ 开头的特征
+    features_to_neutralize: "all" 
+    # 并行加速：如果数据量大，开启并行
+    n_jobs: -1
 # ==============================================================================
 # 4. 模型训练配置 (Model)
 

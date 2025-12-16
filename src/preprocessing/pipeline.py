@@ -11,6 +11,7 @@ from src.utils.io import save_parquet, ensure_dir, read_parquet, save_csv
 from src.data_source.datahub import DataHub
 from src.preprocessing.features import FeatureGenerator
 from src.preprocessing.labels import LabelGenerator
+from src.preprocessing.neutralization import FeatureNeutralizer  # [新增引用]
 
 logger = get_logger()
 
@@ -22,6 +23,7 @@ class PreprocessPipeline:
         # 初始化组件
         self.feature_eng = FeatureGenerator(self.config)
         self.label_gen = LabelGenerator(self.config)
+        self.neutralizer = FeatureNeutralizer(self.config)  # [新增初始化]
         
         # 路径
         self.output_dir = self.config["paths"]["data_processed"]
@@ -205,6 +207,8 @@ class PreprocessPipeline:
             if "date" in full_df.columns:
                 full_df = full_df.sort_values(by=["date", "symbol"])
             
+            # 在保存 all_stocks.parquet 之前执行中性化
+            full_df = self.neutralizer.run(full_df)
             concat_file = self.batch_cfg.get("concat_file", "all_stocks.parquet")
             out_path = os.path.join(self.output_dir, concat_file)
             save_parquet(full_df, out_path)
