@@ -43,6 +43,7 @@
 
 ### ✅ 3. 特征与模型 (Feature & Model)
 * **特征工程**：内置 MA, MACD, RSI, KDJ, Bollinger, 量比等经典技术指标库，支持向量化批量计算。
+* **特征中性化**：支持市值中性化 (Market Cap Neutralization)，通过横截面回归剔除风格因子影响，获取纯净 Alpha。
 * **高级标签生成**：支持 **三相屏障法 (Triple Barrier Method)**，结合 **VWAP (成交均价)** 计算真实收益，并自动剔除一字涨停样本。
 * **模型训练**：集成了 **XGBoost** 树模型，支持自动划分训练/验证集、模型保存与版本管理。
 
@@ -60,7 +61,7 @@
 Quant_A_SHARE_V2.0/
 ├── config/
 │   └── main.yaml               # [核心] 全局配置文件
-│                               # 包含：路径、数据源、风控参数(市值/价格)、模型参数(滚动训练配置)、
+│                               # 包含：路径、数据源、特征中性化、风控参数(市值/价格)、模型参数(滚动训练配置)、
 │                               # 策略参数(Top-K/动态仓位/择时)、回测配置(成本/轮动模式)。
 │
 ├── docs/                       # [文档] 分析指南
@@ -123,7 +124,8 @@ Quant_A_SHARE_V2.0/
 │   ├── preprocessing/          # 预处理模块
 │   │   ├── pipeline.py         # 特征工程总流水线
 │   │   ├── features.py         # 特征计算工厂
-│   │   └── labels.py           # 标签生成工厂
+│   │   ├── labels.py           # 标签生成工厂
+│   │   └── neutralization.py   # [New] 特征中性化 (市值中性化)
 │   │
 │   ├── strategy/               # 策略模块
 │   │   └── signal.py           # 信号生成器
@@ -355,6 +357,16 @@ python scripts/rebuild_features.py
 * **单文件输出**：每只股票的特征存放在 `data/processed/{symbol}.parquet`。
 
 * **全量合并**：脚本最后会自动将全市场所有股票数据合并为一张大表 `data/processed/all_stocks.parquet`，这是后续模型训练的直接输入。
+
+**3.4 特征中性化 (Feature Neutralization) - 🆕**
+
+为了构建更稳健的策略，避免模型仅利用“小市值效应”等风格因子获利，V2.0 引入了**特征中性化**模块：
+
+* **核心逻辑**：对每一天（Cross-Section）的数据，以特征为目标变量 $Y$，风险因子（如对数流通市值 `feat_mcap_log`）为自变量 $X$ 进行线性回归，取残差 $E = Y - (\beta X + \alpha)$ 作为去风格后的新特征。
+* **灵活配置**：
+    * 支持在 `config/main.yaml` 中配置 `risk_factors`（默认剔除市值影响）。
+    * 可选择对全部特征或指定特征列表进行中性化。
+* **实现代码**：参见 `src/preprocessing/neutralization.py`。
 
 ### 更新说明：
 
@@ -774,15 +786,18 @@ python scripts/live/run_auto_trading.py --real
 
 ### 🚀 未来计划
 
-* **P1 (近期): 可视化增强**
-    * 增加回测结果的交互式 HTML 报告
-    * (已完成) SHAP 值分析，提升模型可解释性
-* **P2 (中期): 策略增强**
-    * 引入 **Monte Carlo 模拟**，评估极端风险
-    * 多模型融合 (XGBoost + LightGBM + CatBoost)
-* **P3 (远期): 深度学习生态**
-    * 接入 LSTM / Transformer 时序模型
-    * 构建 Web Dashboard 管理平台
+* **P1 (近期): 策略增强与风险评估**
+    * 引入 **Monte Carlo 模拟**，进行更全面的极端风险评估
+    * 多模型融合 (XGBoost + LightGBM + CatBoost) 提升预测稳定性
+    * 增加回测结果的交互式 HTML 报告，提供更丰富的图表交互
+
+* **P2 (中期): 深度学习生态**
+    * 接入 LSTM / Transformer / TCN 等时序深度学习模型
+    * 探索 Graph Neural Networks (GNN) 挖掘产业链关系
+
+* **P3 (远期): 平台化与智能化**
+    * 构建 Web Dashboard 管理平台 (监控、回测、实盘一体化)
+    * 引入 LLM (大语言模型) 辅助研报分析与情绪因子挖掘
 
 ---
 
