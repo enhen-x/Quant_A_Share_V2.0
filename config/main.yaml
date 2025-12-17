@@ -238,7 +238,7 @@ strategy:
   # "open":  T+1 开盘价买入（适合追涨策略）
   # "vwap":  T+1 均价买入（Volume Weighted Average Price，最接近实盘）
   # "close": T 收盘价买入（适合保守模拟）
-  entry_price: "t_close"
+  entry_price: "vwap"
 
   # === 换仓模式配置 ===
   # "rolling":  滚动换仓 (默认)。每天换 1/N 仓位，资金曲线更平滑。
@@ -249,7 +249,7 @@ strategy:
  # 是否开启预测分平滑 (MA3)
   # true:  使用最近 3 天预测分的平均值进行排序。优点：稳健，抗噪音；缺点：信号滞后。
   # false: 仅使用当天的预测分进行排序。优点：灵敏，捕捉瞬间爆发；缺点：容易受噪音干扰。
-  enable_score_smoothing: false
+  enable_score_smoothing: true
 
   # === [升级] 动态仓位管理 ===
   # 逻辑：

@@ -109,7 +109,7 @@ class TopKSignalStrategy:
         
         # === 根据配置决定是否进行平滑 ===
         if self.enable_smoothing:
-            SMOOTH_WINDOW = 3
+            SMOOTH_WINDOW = 2
             # 确保数据排序
             pred_df = pred_df.sort_values(by=["symbol", "date"])
             

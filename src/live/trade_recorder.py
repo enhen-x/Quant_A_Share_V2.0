@@ -35,7 +35,10 @@ class TradeRecorder:
         """加载交易记录"""
         if self.records_file.exists():
             try:
-                df = pd.read_csv(self.records_file, parse_dates=['date', 'plan_sell_date', 'actual_sell_date'])
+                df = pd.read_csv(self.records_file, dtype={'symbol': str}, parse_dates=['date', 'plan_sell_date', 'actual_sell_date'])
+                # 确保 symbol 列为6位字符串（防止历史数据丢失前导零）
+                if 'symbol' in df.columns:
+                    df['symbol'] = df['symbol'].apply(lambda x: str(x).zfill(6) if pd.notna(x) else x)
                 logger.info(f"加载交易记录: {len(df)} 条")
                 return df
             except Exception as e:
