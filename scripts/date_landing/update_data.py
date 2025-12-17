@@ -109,27 +109,22 @@ class DataUpdater:
         
         # 2. 下载增量
         logger.info(f"正在下载指数增量数据: {start_fetch_date} -> {self.today}")
-        df_new = self.datahub.fetch_index_price(index_code) 
+        df_new = self.datahub.fetch_index_price(index_code, start_date=start_fetch_date, end_date=self.today) 
         
         if not df_new.empty:
             df_new["date"] = pd.to_datetime(df_new["date"])
-            mask = df_new["date"] >= pd.to_datetime(start_fetch_date)
-            df_delta = df_new[mask]
             
-            if not df_delta.empty:
-                # 3. 合并
-                if not df_local.empty:
-                    df_final = pd.concat([df_local, df_delta], axis=0)
-                    df_final = df_final.drop_duplicates(subset=["date"]).sort_values("date")
-                else:
-                    df_final = df_delta
-                
-                save_parquet(df_final, file_path)
-                logger.info(f"指数更新完成，新增 {len(df_delta)} 条记录。")
+            # 3. 合并
+            if not df_local.empty:
+                df_final = pd.concat([df_local, df_new], axis=0)
+                df_final = df_final.drop_duplicates(subset=["date"]).sort_values("date")
             else:
-                logger.info("未发现新的指数交易数据。")
+                df_final = df_new
+            
+            save_parquet(df_final, file_path)
+            logger.info(f"指数更新完成，新增 {len(df_new)} 条记录。")
         else:
-            logger.warning("指数数据下载失败或为空。")
+            logger.info("未发现新的指数交易数据或数据下载失败。")
 
     # ==========================================
     # 3. 更新个股

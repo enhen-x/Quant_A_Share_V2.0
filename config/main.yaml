@@ -232,7 +232,15 @@ strategy:
   top_k: 5
   min_pred: 0.005
   recommend_top_k: 10
-  # === 新增：换仓模式配置 ===
+
+  # === 新增：买入价格模式 ===
+  # 信号日为 T 日，买入发生在 T+1 日
+  # "open":  T+1 开盘价买入（适合追涨策略）
+  # "vwap":  T+1 均价买入（Volume Weighted Average Price，最接近实盘）
+  # "close": T 收盘价买入（适合保守模拟）
+  entry_price: "t_close"
+
+  # === 换仓模式配置 ===
   # "rolling":  滚动换仓 (默认)。每天换 1/N 仓位，资金曲线更平滑。
   # "periodic": 定期换仓。每隔 N 天(horizon) 全部卖出换新，更符合手动操作习惯。
   rebalance_mode: "periodic"

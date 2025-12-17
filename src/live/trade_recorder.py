@@ -69,6 +69,9 @@ class TradeRecorder:
         # 计算计划卖出日期（考虑交易日历）
         plan_sell_date = self._calculate_sell_date(buy_date, hold_days)
         
+        # 确保 symbol 是6位字符串格式
+        symbol = str(symbol).zfill(6)
+        
         # 添加记录
         new_record = {
             'symbol': symbol,
@@ -102,6 +105,9 @@ class TradeRecorder:
             price: 价格
             sell_date: 卖出日期
         """
+        # 确保 symbol 是6位字符串格式
+        symbol = str(symbol).zfill(6)
+        
         # 查找对应的买入记录
         buy_records = self.records[
             (self.records['symbol'] == symbol) &

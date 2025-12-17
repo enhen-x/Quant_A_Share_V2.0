@@ -96,44 +96,18 @@ class DataHub:
     # 4. 指数行情 (Index)
     # ==========================
     
-    def fetch_index_price(self, index_code: str) -> pd.DataFrame:
+    def fetch_index_price(self, index_code: str, start_date: str = None, end_date: str = None) -> pd.DataFrame:
         """
         [网络] 下载指数行情
         :param index_code: 如 "000300.SH"
+        :param start_date: 开始日期，默认使用配置中的 start_date
+        :param end_date: 结束日期，默认使用配置中的 end_date
         """
-        import akshare as ak
+        s_date = start_date or self.config["data"]["start_date"]
+        e_date = end_date or self.config["data"]["end_date"]
         
-        # 1. 格式转换: Config 中是 "000300.SH"，AkShare 通常需要 "sh000300"
-        symbol = index_code.lower().replace(".", "") # 000300.sh -> 000300sh
-        if symbol.endswith("sh"):
-            symbol = "sh" + symbol[:-2] # sh000300
-        elif symbol.endswith("sz"):
-            symbol = "sz" + symbol[:-2] # sz399001
-            
-        logger.info(f"正在通过 AkShare 下载指数数据: {symbol}")
-        
-        try:
-            # 2. 调用 AkShare 接口
-            df = ak.stock_zh_index_daily_em(symbol=symbol)
-            
-            if df is None or df.empty:
-                return pd.DataFrame()
-
-            # 3. 统一列名
-            rename_map = {
-                "date": "date", "open": "open", "close": "close", 
-                "high": "high", "low": "low", "volume": "volume",
-                "amount": "amount"
-            }
-            df = df.rename(columns=rename_map)
-            df["date"] = pd.to_datetime(df["date"])
-            
-            # 4. 排序并返回
-            return df.sort_values("date").reset_index(drop=True)
-
-        except Exception as e:
-            logger.error(f"指数下载发生异常: {e}")
-            return pd.DataFrame()
+        # 通过 BaostockSource 获取指数数据
+        return self.source.get_index_price(index_code, s_date, e_date)
     
 
     # 5. 清洗后数据 (Cleaned Data) [新增]

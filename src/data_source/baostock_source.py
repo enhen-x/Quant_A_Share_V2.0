@@ -158,6 +158,54 @@ class BaostockSource(BaseDataSource):
 
         return df
 
+    def get_index_price(self, index_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        获取指数日线数据
+        :param index_code: 如 "000300.SH" 或 "399001.SZ"
+        :param start_date: 开始日期 "YYYY-MM-DD"
+        :param end_date: 结束日期 "YYYY-MM-DD"
+        """
+        # 1. 格式转换: "000300.SH" -> "sh.000300"
+        if "." in index_code:
+            code, market = index_code.split(".")
+            bs_symbol = f"{market.lower()}.{code}"
+        else:
+            # 默认沪市指数
+            bs_symbol = f"sh.{index_code}"
+        
+        logger.info(f"正在通过 Baostock 下载指数数据: {bs_symbol}")
+        
+        # 2. 调用 Baostock 接口
+        fields = "date,open,high,low,close,volume,amount"
+        
+        rs = bs.query_history_k_data_plus(
+            bs_symbol,
+            fields,
+            start_date=start_date,
+            end_date=end_date,
+            frequency="d",
+            adjustflag="3"  # 指数不需要复权，使用 3=不复权
+        )
+        
+        data_list = []
+        while (rs.error_code == '0') and rs.next():
+            data_list.append(rs.get_row_data())
+        
+        if not data_list:
+            logger.warning(f"Baostock 未返回指数数据: {bs_symbol}")
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(data_list, columns=fields.split(","))
+        
+        # 3. 类型转换
+        df["date"] = pd.to_datetime(df["date"])
+        num_cols = ["open", "high", "low", "close", "volume", "amount"]
+        for col in num_cols:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+        logger.info(f"指数数据下载完成，共 {len(df)} 条记录")
+        return df.sort_values("date").reset_index(drop=True)
+
     def get_trade_calendar(self, start_date: str, end_date: str) -> pd.DataFrame:
         """获取交易日历"""
         rs = bs.query_trade_dates(start_date=start_date, end_date=end_date)
