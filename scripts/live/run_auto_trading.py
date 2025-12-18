@@ -1,6 +1,11 @@
 # scripts/live/run_auto_trading.py
 """
 自动交易主执行脚本
+
+核心改进：
+1. 在执行任何操作前验证配置文件
+2. 显示配置信息供用户确认
+3. 配置验证失败时拒绝执行
 """
 
 import os
@@ -14,9 +19,48 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.utils.logger import get_logger
+from src.live.config import get_config
 from src.live.trading_scheduler import TradingScheduler
 
 logger = get_logger()
+
+
+def load_and_validate_config():
+    """
+    加载并验证配置文件
+    
+    Returns:
+        LiveTradingConfig: 配置对象，如果验证失败则返回 None
+    """
+    print("=" * 70)
+    print("步骤 0：加载配置文件")
+    print("=" * 70)
+    
+    try:
+        config = get_config()
+        config.validate()
+        config.show()
+        print("\n✅ 配置验证通过\n")
+        return config
+    except FileNotFoundError as e:
+        print(f"\n❌ 配置文件不存在:")
+        print(f"   {e}")
+        print("\n💡 请创建配置文件: data/live_trading/config.txt")
+        print("   参考格式:")
+        print("   cookies=your_xueqiu_cookies")
+        print("   portfolio_code=ZH1234567")
+        print("   initial_capital=100000")
+        print("   hold_days=5")
+        print("   max_stocks_per_day=10")
+        return None
+    except ValueError as e:
+        print(f"\n❌ 配置验证失败:")
+        print(f"   {e}")
+        return None
+    except Exception as e:
+        print(f"\n❌ 配置加载异常: {e}")
+        return None
+
 
 def main(dry_run=True):
     """
@@ -29,11 +73,21 @@ def main(dry_run=True):
     print("自动交易系统")
     print("=" * 70)
     
+    # 步骤 0：加载并验证配置
+    config = load_and_validate_config()
+    if config is None:
+        print("\n❌ 配置验证失败，程序终止")
+        return
+    
     if dry_run:
         print("\n🔸 模拟模式：不会实际下单到雪球")
     else:
         print("\n⚠️  真实模式：将实际下单到雪球模拟盘！")
-        confirm = input("确认继续？(输入 yes 继续): ")
+        print(f"   组合代码: {config.portfolio_code}")
+        print(f"   初始资金: {config.initial_capital:,} 元")
+        print(f"   持有天数: {config.hold_days} 天")
+        print(f"   每日买入: {config.max_stocks_per_day} 只")
+        confirm = input("\n确认继续？(输入 yes 继续): ")
         if confirm.lower() != 'yes':
             print("已取消")
             return
@@ -124,14 +178,27 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='自动交易执行脚本')
     parser.add_argument(
-        '--real', 
+        '--sim', 
         action='store_true', 
-        help='真实模式（实际下单）'
+        help='模拟模式（不实际下单）'
+    )
+    parser.add_argument(
+        '--config-only',
+        action='store_true',
+        help='仅验证配置文件，不执行交易'
     )
     
     args = parser.parse_args()
     
-    # 默认模拟模式，--real参数切换到真实模式
-    dry_run = args.real
+    # 仅验证配置模式
+    if args.config_only:
+        config = load_and_validate_config()
+        if config:
+            print("配置文件有效，可以进行交易。")
+        sys.exit(0 if config else 1)
+    
+    # 默认真实模式，--sim 参数切换到模拟模式
+    dry_run = args.sim
     
     main(dry_run=dry_run)
+

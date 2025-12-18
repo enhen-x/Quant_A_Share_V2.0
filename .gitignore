@@ -59,4 +59,5 @@ config/xueqiu_account.txt
 config/broker_account.json
 data/live_trading/*
 !data/live_trading/.gitkeep
+!data/live_trading/*.example.txt
 
