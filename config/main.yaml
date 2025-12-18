@@ -229,7 +229,7 @@ model:
 # ==============================================================================
 strategy:
   mode: "long_topk"
-  top_k: 5
+  top_k: 3
   min_pred: 0.005
   recommend_top_k: 10
 
@@ -243,7 +243,7 @@ strategy:
   # === 换仓模式配置 ===
   # "rolling":  滚动换仓 (默认)。每天换 1/N 仓位，资金曲线更平滑。
   # "periodic": 定期换仓。每隔 N 天(horizon) 全部卖出换新，更符合手动操作习惯。
-  rebalance_mode: "periodic"
+  rebalance_mode: "rolling"
 
 
  # 是否开启预测分平滑 (MA3)

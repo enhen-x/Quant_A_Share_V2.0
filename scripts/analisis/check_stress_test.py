@@ -20,6 +20,10 @@ from src.utils.io import read_parquet, ensure_dir
 from src.strategy.signal import TopKSignalStrategy
 from src.backtest.backtester import VectorBacktester
 
+# Matplotlib 字体配置（解决中文和减号显示问题）
+plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'sans-serif']
+plt.rcParams['axes.unicode_minus'] = False  # 使用 ASCII 减号代替 Unicode 减号
+
 logger = get_logger()
 
 def get_latest_predictions():
