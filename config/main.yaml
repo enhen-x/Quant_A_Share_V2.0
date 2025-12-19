@@ -187,9 +187,9 @@ model:
   # XGBoost 参数 (优化后 - 2025-12-15)
   # 优化要点：降低学习率、加强正则化、减小复杂度
   params:
-    n_estimators: 200          # 增加迭代次数（配合降低学习率）
+    n_estimators: 3000         # 增加迭代次数到3000（配合降低学习率）
     max_depth: 5               # 从 6 降到 5，减少过拟合
-    learning_rate: 0.1         # 从 0.03 降到 0.01，更精细搜索
+    learning_rate: 0.01        # 从 0.03 降到 0.005，更精细搜索
     subsample: 0.8             # 从 0.9 降到 0.8，增加随机性
     colsample_bytree: 0.8      # 从 0.95 降到 0.8，特征抽样
     
@@ -199,7 +199,8 @@ model:
     min_child_weight: 3        # 叶子节点最小样本权重
     gamma: 0.1                 # 分裂所需最小增益
     
-    tree_method: "hist"
+    tree_method: "hist"        # 构建树的方法
+    device: "cuda"             # 使用 GPU 训练 (XGBoost 3.x 新参数)
   
   # 早停耐心（增加到 100 轮）
   early_stopping_rounds: 100
@@ -208,9 +209,9 @@ model:
   # === 新增：滚动训练配置 (Walk-Forward) ===
   walk_forward:
     enable: true
-    start_year: 2019         # [关键] 哪一年开始产生预测？(即 2019之前的都是初始训练集)
+    start_year: 2019         # [关键] 哪一年开始产生预测？(即 2020之前的都是初始训练集)
     train_window_type: "expanding" # "expanding" (扩张: 2010~T) 或 "rolling" (滚动: T-N~T)
-    rolling_window_size: 5   # 仅当 rolling 时生效，训练窗口长度(年)
+    rolling_window_size: 3   # 仅当 rolling 时生效，训练窗口长度(年)
     update_freq: "yearly"    # 更新频率 (目前支持按年)
 
   # === 新增：训练监控配置 (TensorBoard) ===
