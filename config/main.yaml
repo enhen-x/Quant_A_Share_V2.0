@@ -187,9 +187,9 @@ model:
   # XGBoost 参数 (优化后 - 2025-12-15)
   # 优化要点：降低学习率、加强正则化、减小复杂度
   params:
-    n_estimators: 3000         # 增加迭代次数（配合降低学习率）
+    n_estimators: 200          # 增加迭代次数（配合降低学习率）
     max_depth: 5               # 从 6 降到 5，减少过拟合
-    learning_rate: 0.01       # 从 0.03 降到 0.01，更精细搜索
+    learning_rate: 0.1         # 从 0.03 降到 0.01，更精细搜索
     subsample: 0.8             # 从 0.9 降到 0.8，增加随机性
     colsample_bytree: 0.8      # 从 0.95 降到 0.8，特征抽样
     
@@ -229,7 +229,7 @@ model:
 # ==============================================================================
 strategy:
   mode: "long_topk"
-  top_k: 3
+  top_k: 5
   min_pred: 0.005
   recommend_top_k: 10
 
@@ -243,7 +243,7 @@ strategy:
   # === 换仓模式配置 ===
   # "rolling":  滚动换仓 (默认)。每天换 1/N 仓位，资金曲线更平滑。
   # "periodic": 定期换仓。每隔 N 天(horizon) 全部卖出换新，更符合手动操作习惯。
-  rebalance_mode: "rolling"
+  rebalance_mode: "periodic"
 
 
  # 是否开启预测分平滑 (MA3)
