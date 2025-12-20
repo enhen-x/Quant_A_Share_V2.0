@@ -31,10 +31,21 @@ class LabelGenerator:
         self.pt = tb_cfg.get("pt", 0.10)
         self.sl = tb_cfg.get("sl", 0.05)
         
+        # [新增] 双头模型配置
+        self.dual_head_cfg = config.get("model", {}).get("dual_head", {})
+        self.dual_head_enabled = self.dual_head_cfg.get("enable", False)
+        
         # 加载指数数据
         self.df_index = None
-        if self.return_mode == "excess_index":
+        if self.return_mode == "excess_index" or self._need_index_for_dual_head():
             self._load_index(config)
+    
+    def _need_index_for_dual_head(self) -> bool:
+        """检查双头模型是否需要指数数据"""
+        if not self.dual_head_enabled:
+            return False
+        cls_cfg = self.dual_head_cfg.get("classification", {})
+        return cls_cfg.get("label_mode", "absolute") == "excess_index"
 
     # ... (原有 _load_index 保持不变) ...
     def _load_index(self, config):
@@ -80,7 +91,50 @@ class LabelGenerator:
         # 这一步是为了清洗类似 461% 这样的数据错误或极端新股行情
         if self.enable_winsorize:
             self._apply_winsorization(df)
+        
+        # [新增] 5. 双头模型分类标签生成
+        if self.dual_head_enabled:
+            cls_cfg = self.dual_head_cfg.get("classification", {})
+            if cls_cfg.get("enable", True):
+                df = self._generate_classification_label(df, price_for_entry, price_for_exit)
 
+        return df
+    
+    def _generate_classification_label(self, df: pd.DataFrame, price_entry, price_exit) -> pd.DataFrame:
+        """
+        [新增] 生成二分类标签 (0=跌, 1=涨)
+        
+        Args:
+            df: 数据框
+            price_entry: 入场价格序列
+            price_exit: 出场价格序列
+        """
+        cls_cfg = self.dual_head_cfg.get("classification", {})
+        label_mode = cls_cfg.get("label_mode", "absolute")
+        threshold = cls_cfg.get("threshold", 0.0)
+        
+        if label_mode == "absolute":
+            # 使用绝对收益
+            entry_price = price_entry.shift(-1)
+            exit_price = price_exit.shift(-(1 + self.horizon))
+            raw_ret = (exit_price / entry_price) - 1.0
+            logger.info(f"分类标签使用绝对涨幅模式, 阈值: {threshold:.4f}")
+        else:
+            # 使用超额收益 (已计算的 label 列)
+            raw_ret = df["label"]
+            logger.info(f"分类标签使用超额涨幅模式, 阈值: {threshold:.4f}")
+        
+        # 生成 0/1 标签
+        df["label_cls"] = (raw_ret > threshold).astype(int)
+        
+        # 统计分布
+        pos_count = (df["label_cls"] == 1).sum()
+        neg_count = (df["label_cls"] == 0).sum()
+        total = pos_count + neg_count
+        if total > 0:
+            logger.info(f"分类标签分布: 正样本(涨)={pos_count:,} ({pos_count/total:.1%}), "
+                       f"负样本(跌)={neg_count:,} ({neg_count/total:.1%})")
+        
         return df
 
     # ... (原有 _calc_fixed_time, _calc_triple_barrier, _get_index_return, _apply_limit_filter 保持不变) ...

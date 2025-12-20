@@ -32,7 +32,11 @@ from src.utils.io import read_parquet, ensure_dir
 
 # Matplotlib 字体配置（解决中文和减号显示问题）
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'sans-serif']
+plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['axes.unicode_minus'] = False  # 使用 ASCII 减号代替 Unicode 减号
+plt.rcParams['mathtext.fontset'] = 'stix'   # 数学公式字体集
+plt.rcParams['mathtext.default'] = 'regular'  # 数学文本默认字体
+
 
 logger = get_logger()
 
@@ -564,11 +568,13 @@ class VectorBacktester:
         # ====================================================================
         # 【字体设置】在每次绘图前强制设置，以应对外部样式覆盖
         # ====================================================================
-        # 设置中文字体列表，确保找到一个可用的中文字体
         plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'sans-serif']
-        # 强制使用 ASCII 减号 ('-') 代替 Unicode 减号 ('−')，解决负号显示警告
-        plt.rcParams['axes.unicode_minus'] = False 
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['axes.unicode_minus'] = False  # 使用 ASCII 减号代替 Unicode 减号
+        plt.rcParams['mathtext.fontset'] = 'stix'
+        plt.rcParams['mathtext.default'] = 'regular'
         # ====================================================================
+
 
         # 创建 2 行 1 列的子图布局
         fig, axes = plt.subplots(2, 1, figsize=(12, 10))

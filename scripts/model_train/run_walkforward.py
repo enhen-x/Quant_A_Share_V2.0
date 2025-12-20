@@ -31,6 +31,10 @@ class WalkForwardRunner:
         self.window_type = self.wf_cfg.get("train_window_type", "expanding")
         self.rolling_size = self.wf_cfg.get("rolling_window_size", 5)
         
+        # 双头模型配置
+        self.dual_head_cfg = self.config["model"].get("dual_head", {})
+        self.dual_head_enabled = self.dual_head_cfg.get("enable", False)
+        
         # 版本管理 (WF_ + 时间戳)
         self.version = "WF_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.output_dir = os.path.join(GLOBAL_CONFIG["paths"]["models"], self.version)
@@ -41,6 +45,7 @@ class WalkForwardRunner:
         logger.info(f"版本号: {self.version}")
         logger.info(f"输出路径: {self.output_dir}")
         logger.info(f"策略: {self.window_type} | 测试集起始年份: {self.start_year}")
+        logger.info(f"双头模型: {'启用' if self.dual_head_enabled else '禁用'}")
 
         # 1. 复用 Trainer 加载数据
         trainer = ModelTrainer()
@@ -48,6 +53,14 @@ class WalkForwardRunner:
         
         # 确保日期列为 datetime
         df["date"] = pd.to_datetime(df["date"])
+        
+        # 双头模型: 检查分类标签
+        label_cls = "label_cls"
+        if self.dual_head_enabled:
+            if label_cls not in df.columns:
+                logger.error(f"未找到分类标签列 '{label_cls}'，请确保启用双头模型后重新运行 pipeline")
+                raise ValueError(f"缺少分类标签列 '{label_cls}'")
+            logger.info(f"分类标签 '{label_cls}' 已加载")
         
         # 获取所有包含的年份
         data_years = sorted(df["date"].dt.year.unique())
@@ -96,28 +109,57 @@ class WalkForwardRunner:
                 continue
                 
             X_train = df.loc[train_mask, features]
-            y_train = df.loc[train_mask, label]
             X_test = df.loc[test_mask, features]
-            y_test = df.loc[test_mask, label] # 仅用于评估，不参与训练
             
             # --- C. 训练模型 ---
-            # 这里我们把 Test 集作为 Validation 集传给 XGBoost 用于 early_stopping
-            # 注意：这在严格意义上有一点点泄露（用来停机），但业界常用做法，
-            # 或者你可以再从 train 里分一部分做 val。这里为了简单直接用 test 做 eval。
-            model = trainer.train_model(X_train, y_train, X_test, y_test)
+            if self.dual_head_enabled:
+                # ========== 双头模型训练 ==========
+                y_train_reg = df.loc[train_mask, label]
+                y_train_cls = df.loc[train_mask, label_cls]
+                y_test_reg = df.loc[test_mask, label]
+                y_test_cls = df.loc[test_mask, label_cls]
+                
+                reg_model, cls_model = trainer.train_dual_head(
+                    X_train, y_train_reg, y_train_cls,
+                    X_test, y_test_reg, y_test_cls,
+                    feature_names=features
+                )
+                
+                # --- D. 保存当年模型 ---
+                if reg_model is not None:
+                    reg_model.save(os.path.join(self.output_dir, f"model_reg_{year}.joblib"))
+                if cls_model is not None:
+                    cls_model.save(os.path.join(self.output_dir, f"model_cls_{year}.joblib"))
+                
+                # --- E. 生成预测 ---
+                pred_reg = reg_model.predict(X_test) if reg_model else None
+                pred_cls = cls_model.predict(X_test) if cls_model else None
+                pred_scores = trainer.fuse_predictions(pred_reg, pred_cls)
+                
+                # 构造结果片段
+                res_df = df.loc[test_mask, ["date", "symbol", "close", label, label_cls]].copy()
+                res_df["pred_reg"] = pred_reg
+                res_df["pred_cls"] = pred_cls
+                res_df["pred_score"] = pred_scores
+                
+            else:
+                # ========== 单模型训练 (原有逻辑) ==========
+                y_train = df.loc[train_mask, label]
+                y_test = df.loc[test_mask, label]
+                
+                model = trainer.train_model(X_train, y_train, X_test, y_test)
+                
+                # --- D. 保存当年模型 ---
+                model.save(os.path.join(self.output_dir, f"model_{year}.json"))
+                
+                # --- E. 生成预测 ---
+                pred_scores = model.predict(X_test)
+                
+                # 构造结果片段
+                res_df = df.loc[test_mask, ["date", "symbol", "close", label]].copy()
+                res_df["pred_score"] = pred_scores
             
-            # --- D. 保存当年模型 ---
-            model_name = f"model_{year}.json"
-            model.save(os.path.join(self.output_dir, model_name))
-            
-            # --- E. 生成预测 ---
-            pred_scores = model.predict(X_test)
-            
-            # 构造结果片段
-            res_df = df.loc[test_mask, ["date", "symbol", "close", label]].copy()
-            res_df["pred_score"] = pred_scores
-            res_df["train_year"] = year - 1 # 标记是用哪一年的模型预测的
-            
+            res_df["train_year"] = year - 1  # 标记是用哪一年的模型预测的
             all_preds.append(res_df)
             logger.info(f"  {year} 年预测完成，样本数: {len(res_df)}")
 
@@ -136,10 +178,18 @@ class WalkForwardRunner:
             logger.info(f"总样本数: {len(full_pred_df)}")
             logger.info(f"覆盖年份: {full_pred_df['date'].dt.year.unique()}")
             
+            if self.dual_head_enabled:
+                logger.info(f"双头模型权重: 回归={self.dual_head_cfg.get('regression', {}).get('weight', 0.6)}, "
+                           f"分类={self.dual_head_cfg.get('classification', {}).get('weight', 0.4)}")
+            
             # 自动生成 config 备份 (方便追溯)
             import yaml
+            config_backup = {
+                "walk_forward": self.wf_cfg,
+                "dual_head": self.dual_head_cfg if self.dual_head_enabled else {"enable": False}
+            }
             with open(os.path.join(self.output_dir, "run_config.yaml"), "w") as f:
-                yaml.dump(self.wf_cfg, f)
+                yaml.dump(config_backup, f)
                 
         else:
             logger.error("未能生成任何预测结果！")

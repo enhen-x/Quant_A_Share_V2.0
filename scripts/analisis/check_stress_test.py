@@ -10,8 +10,11 @@ import datetime
 import matplotlib
 matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'sans-serif']
 matplotlib.rcParams['axes.unicode_minus'] = False  # 使用 ASCII 减号代替 Unicode 减号
+matplotlib.rcParams['mathtext.fontset'] = 'stix'   # 数学字体集
+matplotlib.rcParams['font.family'] = 'sans-serif'
 
 import matplotlib.pyplot as plt
+
 
 # 路径适配
 current_dir = os.path.dirname(os.path.abspath(__file__))

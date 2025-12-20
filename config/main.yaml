@@ -223,6 +223,45 @@ model:
   # === 新增：特征筛选配置 ===
   use_feature_selection: true  # 启用特征筛选（使用 selected_features.txt）
 
+  # ==============================================================================
+  # === 新增：双头模型配置 (Dual-Head Model) ===
+  # ==============================================================================
+  dual_head:
+    enable: true                    # 是否启用双头系统 (设为 true 后启用)
+    model_type: "lightgbm"          # 模型类型: lightgbm / xgboost
+    
+    # --- 回归头配置 (预测收益率) ---
+    regression:
+      enable: true
+      label_mode: "excess_index"    # excess_index (超额收益) / absolute (绝对收益)
+      weight: 0.6                   # 融合权重 α
+    
+    # --- 分类头配置 (预测涨跌方向) ---
+    classification:
+      enable: true
+      label_mode: "absolute"        # absolute (绝对涨跌) / excess_index (超额涨跌)
+      threshold: 0.0                # 分类阈值: >threshold 为涨 (1), ≤threshold 为跌 (0)
+      weight: 0.4                   # 融合权重 β
+    
+    # --- 融合策略 ---
+    fusion:
+      method: "weighted_average"    # 融合方法: weighted_average / multiplicative
+      normalize: true               # 融合前是否对两个预测进行归一化
+
+  # === LightGBM 参数 (双头模型使用) ===
+  lgb_params:
+    n_estimators: 3000
+    max_depth: 6
+    learning_rate: 0.02
+    num_leaves: 63
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    min_child_samples: 20
+    device: "gpu"                   # gpu / cpu
+    verbose: -1
+
 
 # ==============================================================================
 # 5. 策略配置 (Strategy)

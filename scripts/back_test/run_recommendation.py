@@ -17,7 +17,6 @@ if project_root not in sys.path:
 from src.utils.config import GLOBAL_CONFIG
 from src.utils.logger import get_logger
 from src.utils.io import read_parquet
-from src.model.xgb_model import XGBModelWrapper
 from src.strategy.signal import TopKSignalStrategy
 
 logger = get_logger()
@@ -26,6 +25,10 @@ def get_latest_model_path():
     """
     智能寻找 data/models 下最新的模型文件
     支持识别普通训练目录和 WF (滚动训练) 目录
+    返回: (version, model_info_dict)
+    model_info_dict 格式:
+      - 单模型: {"type": "single", "path": "...", "format": "xgb/lgb"}
+      - 双头: {"type": "dual_head", "reg_path": "...", "cls_path": "...", "format": "lgb"}
     """
     models_dir = GLOBAL_CONFIG["paths"]["models"]
     if not os.path.exists(models_dir):
@@ -38,13 +41,10 @@ def get_latest_model_path():
 
     # 2. 辅助函数：解析目录名中的时间戳
     def parse_timestamp(dir_name):
-        # 移除前缀 (如 "WF_")
         clean_name = dir_name.replace("WF_", "")
-        # 尝试匹配 YYYYMMDD_HHMMSS 格式
         try:
             return datetime.datetime.strptime(clean_name, "%Y%m%d_%H%M%S")
         except ValueError:
-            # 如果格式不对，返回一个极小时间，排在最后
             return datetime.datetime.min
 
     # 3. 按时间倒序排列 (最新的在前)
@@ -54,28 +54,105 @@ def get_latest_model_path():
     
     logger.info(f"锁定最新模型版本目录: {latest_version}")
 
-    # 4. 在目录中寻找最佳模型文件
-    # 情况 A: 单次训练的标准模型
-    if os.path.exists(os.path.join(version_dir, "model.json")):
-        return latest_version, os.path.join(version_dir, "model.json")
+    # 4. 检测模型类型
+    model_info = {}
     
-    # 情况 B: 滚动训练的年度模型 (model_2024.json, model_2025.json ...)
-    # 我们需要找到年份最大的那个，因为它包含了最新的市场规律
-    wf_models = glob.glob(os.path.join(version_dir, "model_*.json"))
-    if wf_models:
+    # 情况 A: 双头模型 (LightGBM joblib 格式)
+    # 检查是否存在 model_reg*.joblib 和 model_cls*.joblib
+    reg_models = glob.glob(os.path.join(version_dir, "model_reg*.joblib"))
+    cls_models = glob.glob(os.path.join(version_dir, "model_cls*.joblib"))
+    
+    if reg_models and cls_models:
+        # 双头模型，找年份最大的
         def extract_year(path):
             fname = os.path.basename(path)
-            # 提取数字部分
+            match = re.search(r"model_(?:reg|cls)_(\d+)\.joblib", fname)
+            return int(match.group(1)) if match else 0
+        
+        best_reg = max(reg_models, key=extract_year)
+        best_cls = max(cls_models, key=extract_year)
+        best_year = extract_year(best_reg)
+        
+        logger.info(f"检测到双头模型，已自动选择最新年份: {best_year}")
+        model_info = {
+            "type": "dual_head",
+            "reg_path": best_reg,
+            "cls_path": best_cls,
+            "format": "lgb"
+        }
+        return latest_version, model_info
+    
+    # 情况 B: 单模型 - LightGBM joblib (model_reg.joblib 单独存在)
+    single_lgb = os.path.join(version_dir, "model_reg.joblib")
+    if os.path.exists(single_lgb):
+        model_info = {"type": "single", "path": single_lgb, "format": "lgb"}
+        return latest_version, model_info
+    
+    # 情况 C: 单模型 - XGBoost json
+    if os.path.exists(os.path.join(version_dir, "model.json")):
+        model_info = {"type": "single", "path": os.path.join(version_dir, "model.json"), "format": "xgb"}
+        return latest_version, model_info
+    
+    # 情况 D: 滚动训练的 XGBoost 年度模型 (model_2024.json ...)
+    wf_xgb_models = glob.glob(os.path.join(version_dir, "model_*.json"))
+    if wf_xgb_models:
+        def extract_year_xgb(path):
+            fname = os.path.basename(path)
             match = re.search(r"model_(\d+)\.json", fname)
             return int(match.group(1)) if match else 0
         
-        # 找年份最大的
-        best_model_path = max(wf_models, key=extract_year)
-        best_year = extract_year(best_model_path)
-        logger.info(f"检测到滚动训练模型集，已自动选择最新年份: model_{best_year}.json")
-        return latest_version, best_model_path
+        best_model_path = max(wf_xgb_models, key=extract_year_xgb)
+        best_year = extract_year_xgb(best_model_path)
+        logger.info(f"检测到滚动训练 XGBoost 模型，已自动选择最新年份: model_{best_year}.json")
+        model_info = {"type": "single", "path": best_model_path, "format": "xgb"}
+        return latest_version, model_info
 
     return None, None
+
+def load_model(model_info):
+    """
+    根据 model_info 加载模型
+    返回: model 或 (reg_model, cls_model)
+    """
+    if model_info["type"] == "single":
+        if model_info["format"] == "xgb":
+            from src.model.xgb_model import XGBModelWrapper
+            model = XGBModelWrapper()
+            model.load(model_info["path"])
+            return model, None
+        else:  # lgb
+            from src.model.lgb_model import LGBModelWrapper
+            model = LGBModelWrapper(task_type="regression")
+            model.load(model_info["path"])
+            return model, None
+    else:  # dual_head
+        from src.model.lgb_model import LGBModelWrapper
+        reg_model = LGBModelWrapper(task_type="regression")
+        reg_model.load(model_info["reg_path"])
+        cls_model = LGBModelWrapper(task_type="classification")
+        cls_model.load(model_info["cls_path"])
+        return reg_model, cls_model
+
+def fuse_predictions(pred_reg, pred_cls, dual_head_cfg):
+    """融合双头模型预测结果"""
+    import numpy as np
+    
+    fusion_cfg = dual_head_cfg.get("fusion", {})
+    normalize = fusion_cfg.get("normalize", True)
+    reg_weight = dual_head_cfg.get("regression", {}).get("weight", 0.6)
+    cls_weight = dual_head_cfg.get("classification", {}).get("weight", 0.4)
+    
+    if normalize:
+        def min_max_normalize(arr):
+            arr = np.array(arr)
+            min_val, max_val = arr.min(), arr.max()
+            if max_val - min_val < 1e-9:
+                return np.zeros_like(arr)
+            return (arr - min_val) / (max_val - min_val)
+        pred_reg = min_max_normalize(pred_reg)
+        pred_cls = min_max_normalize(pred_cls)
+    
+    return reg_weight * pred_reg + cls_weight * pred_cls
 
 def load_latest_data():
     """加载特征数据，并提取出【最近 N 个交易日】的数据，用于预测和平滑。"""
@@ -84,24 +161,18 @@ def load_latest_data():
         logger.error(f"特征文件不存在: {data_path}，请先运行 rebuild_features.py")
         return None, None, None
 
-    # 读取数据 (实盘可优化为只读最后的分区)
     df = read_parquet(data_path)
     df["date"] = pd.to_datetime(df["date"])
     
-    # 提取特征列 (feat_ 开头)
     feat_cols = [c for c in df.columns if c.startswith("feat_")]
     
-    # 获取最新的 N 个交易日的数据 (N=3, 与 signal.py 中的 SMOOTH_WINDOW 匹配)
     N_DAYS = 3 
-    
-    # 1. 获取唯一的日期并排序
     unique_dates = sorted(df["date"].unique(), reverse=True)
     
     if len(unique_dates) < N_DAYS:
         logger.warning(f"总交易日 ({len(unique_dates)}) 少于平滑窗口 ({N_DAYS}天)，使用全部数据。")
         target_dates = unique_dates
     else:
-        # 取最近的 N 个交易日
         target_dates = unique_dates[:N_DAYS]
     
     df_slice = df[df["date"].isin(target_dates)].copy()
@@ -113,21 +184,26 @@ def load_latest_data():
     latest_date = unique_dates[0]
     logger.info(f"数据集中最新日期为: {latest_date.strftime('%Y-%m-%d')}，将加载前 {len(target_dates)} 个交易日的数据。")
 
-    # 返回切片数据、特征列表、最新日期
     return df_slice, feat_cols, latest_date
 
 def main():
     logger.info("=== 启动每日推荐系统 (Daily Recommendation) ===")
 
+    # 读取双头模型配置
+    dual_head_cfg = GLOBAL_CONFIG["model"].get("dual_head", {})
+    dual_head_enabled = dual_head_cfg.get("enable", False)
+    logger.info(f"双头模型配置: {'启用' if dual_head_enabled else '禁用'}")
+
     # 1. 智能加载模型
-    version, model_path = get_latest_model_path()
-    if not model_path:
+    version, model_info = get_latest_model_path()
+    if not model_info:
         logger.error("未找到可用模型文件，请先运行 run_walkforward.py 或 train_model.py")
         return
     
-    logger.info(f"加载模型文件: {model_path}")
-    model = XGBModelWrapper()
-    model.load(model_path)
+    logger.info(f"模型类型: {model_info['type']}, 格式: {model_info['format']}")
+    
+    reg_model, cls_model = load_model(model_info)
+    is_dual_head = model_info["type"] == "dual_head"
     
     # 2. 加载最新行情数据（最近 N 天）
     df_slice, feat_cols, latest_date = load_latest_data()
@@ -139,28 +215,33 @@ def main():
     logger.info(f"正在对 {len(df_slice)} 行数据 ({df_slice['symbol'].nunique()} 只股票) 进行打分...")
     
     # 3.1 特征对齐
-    # 优先使用模型记录的特征名 (如果有)
     final_features = feat_cols
-    if hasattr(model.model, "feature_names") and model.model.feature_names:
-        model_features = model.model.feature_names
+    # 使用模型记录的特征名
+    if reg_model and hasattr(reg_model, 'feature_names') and reg_model.feature_names:
+        model_features = reg_model.feature_names
         logger.info(f"使用模型内置特征列表: {len(model_features)} 个")
         
-        # 检查缺失特征
         missing = [f for f in model_features if f not in df_slice.columns]
         if missing:
             logger.error(f"严重错误：数据中缺少模型所需的特征: {missing}")
-            logger.error("这通常是由于特征工程配置 (rebuild_features.py) 与模型训练时的配置不一致导致的。")
             return
             
         final_features = model_features
     else:
-        logger.warning(f"模型未记录特征名，将使用所有 {len(final_features)} 个 'feat_' 开头的列。可能会导致 mismatch 错误。")
+        logger.warning(f"模型未记录特征名，将使用所有 {len(final_features)} 个 'feat_' 开头的列。")
 
     # 3.2 预测分数
     try:
-        # 确保列顺序与模型一致
         X_pred = df_slice[final_features]
-        pred_scores = model.predict(X_pred)
+        
+        if is_dual_head:
+            pred_reg = reg_model.predict(X_pred)
+            pred_cls = cls_model.predict(X_pred)
+            pred_scores = fuse_predictions(pred_reg, pred_cls, dual_head_cfg)
+            logger.info(f"双头融合预测完成 (权重: reg={dual_head_cfg.get('regression', {}).get('weight', 0.6)}, cls={dual_head_cfg.get('classification', {}).get('weight', 0.4)})")
+        else:
+            pred_scores = reg_model.predict(X_pred)
+            
     except Exception as e:
         logger.error(f"预测失败: {e}")
         return
@@ -178,14 +259,8 @@ def main():
     
     logger.info(f"生成推荐列表长度: {rec_k} (含备选)")
     
-    # 实例化策略时传入 top_k
     strategy = TopKSignalStrategy(top_k=rec_k)
-    
-    # **关键：传递包含历史数据的 pred_df，以便 strategy.generate 计算平滑得分**
-    # 注意：需确保 src/strategy/signal.py 已修改为返回包含 pos_ratio 的列
     recommend_df = strategy.generate(pred_df)
-    
-    # 筛选出最新的信号（即今天）
     recommend_df_latest = recommend_df[recommend_df["date"] == latest_date].copy()
     
     # 5. 输出结果
@@ -195,19 +270,15 @@ def main():
         print(pred_df[pred_df["date"] == latest_date].sort_values("pred_score", ascending=False).head(5))
         return
 
-    # === [新增] 获取风控仓位系数 ===
     current_pos_ratio = 1.0
     if "pos_ratio" in recommend_df_latest.columns:
-        # 获取当天的风控系数 (所有股票同一天系数相同)
         current_pos_ratio = recommend_df_latest["pos_ratio"].iloc[0]
 
-    # 补充股票名称以便阅读
     meta_path = os.path.join(GLOBAL_CONFIG["paths"]["data_meta"], "all_stocks_meta.parquet")
     if os.path.exists(meta_path):
         df_meta = read_parquet(meta_path)
         recommend_df_latest = pd.merge(recommend_df_latest, df_meta[["symbol", "name"]], on="symbol", how="left")
     
-    # 补充原始预测分
     recommend_df_latest = pd.merge(recommend_df_latest, 
                                    pred_df[["date", "symbol", "pred_score"]], 
                                    on=["date", "symbol"], how="left")
@@ -216,7 +287,9 @@ def main():
     print("\n" + "="*70)
     print(f"🌟 {latest_date.strftime('%Y-%m-%d')} 每日精选推荐 (Top {len(recommend_df_latest)}) 🌟")
     
-    # === [新增] 显式打印风控状态 ===
+    if is_dual_head:
+        print(f"📊 使用双头模型 (回归+分类融合)")
+    
     print("-" * 70)
     print(f"🛡️  风控系统建议总仓位: {current_pos_ratio * 100:.0f}%")
     if current_pos_ratio < 1.0:
@@ -228,15 +301,12 @@ def main():
         print("✅  [积极信号] 市场趋势良好，建议正常仓位操作。")
     print("-" * 70)
     
-    # [修改] 输出列中加入 pos_ratio
     cols = ["symbol", "name", "pred_score", "pos_ratio", "weight"]
     print_cols = [c for c in cols if c in recommend_df_latest.columns]
     
     print_df = recommend_df_latest[print_cols].sort_values("pred_score", ascending=False).reset_index(drop=True)
     
-    # 尝试使用 tabulate 美化输出
     try:
-        # floatfmt 控制小数位数，让 pred_score 和 weight 显示更清晰
         print(print_df.to_markdown(index=True, floatfmt=".4f"))
     except:
         print(print_df)
@@ -245,7 +315,6 @@ def main():
     out_dir = os.path.join(GLOBAL_CONFIG["paths"]["reports"], "daily_picks")
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    # 使用 latest_date 作为文件名日期
     out_file = os.path.join(out_dir, f"picks_{version}_{latest_date.strftime('%Y%m%d')}.csv")
     print_df.to_csv(out_file, index=False, encoding="utf-8-sig")
     print(f"\n[文件] 推荐列表已保存至: {out_file}")
