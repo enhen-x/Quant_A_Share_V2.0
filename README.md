@@ -45,12 +45,14 @@
 * **特征工程**：内置 MA, MACD, RSI, KDJ, Bollinger, 量比等经典技术指标库，支持向量化批量计算。
 * **特征中性化**：支持市值中性化 (Market Cap Neutralization)，通过横截面回归剔除风格因子影响，获取纯净 Alpha。
 * **高级标签生成**：支持 **三相屏障法 (Triple Barrier Method)**，结合 **VWAP (成交均价)** 计算真实收益，并自动剔除一字涨停样本。
-* **模型训练**：集成了 **XGBoost** 树模型，支持自动划分训练/验证集、模型保存与版本管理。
+* **双头模型 (Dual-Head Model) 🆕**：同时训练 **回归头** (预测收益率) 和 **分类头** (预测涨跌方向)，通过加权融合获得更稳健的预测信号。
+* **模型训练**：支持 **XGBoost** 和 **LightGBM** 双引擎，自动划分训练/验证集、模型保存与版本管理。
 
 ### ✅ 4. 策略与回测 (Strategy & Backtest)
 * **Top-K 选股策略**：基于模型预测分，结合价格、市值、板块等风控规则进行每日精选。
 * **向量化回测引擎**：实现了支持**分仓轮动**的高效回测框架，严格执行 T+1 交易逻辑，内置交易成本扣除，输出资金曲线与夏普比率。
-* **每日推荐系统**：提供一键式脚本，基于最新行情生成**每日潜力股名单 (Daily Picks)**。  
+* **每日推荐系统**：提供一键式脚本，基于最新行情生成**每日潜力股名单 (Daily Picks)**。
+* **蒙特卡洛模拟 🆕**：通过 Bootstrap 重采样、权重扰动、噪音注入等方法评估策略稳健性和置信区间。  
 
 ---
 
@@ -77,6 +79,9 @@ Quant_A_SHARE_V2.0/
 │   │   ├── check_features.py       # [Analysis] 因子有效性检查 (IC 分析/多重共线性/未来函数检测)
 │   │   ├── check_stress_test.py    # [Test] 策略压力测试 (成本敏感性/历史熊市生存测试)
 │   │   ├── check_time_horizon.py   # [Analysis] 最佳持仓周期分析 (IC Decay)
+│   │   ├── check_monte_carlo.py    # [New] 蒙特卡洛模拟分析 (置信区间/稳健性评估)
+│   │   ├── check_overfit.py        # [New] 过拟合检测 (噪音敏感性测试)
+│   │   ├── analyze_threshold.py    # [New] 分类阈值优化分析 (双头模型)
 │   │   ├── explain_model.py        # [Analysis] 模型可解释性分析 (SHAP)
 │   │   ├── feature_selector.py     # [Tools] 特征筛选工具
 │   │   └── signal_diagnosis.py     # [Diagnosis] 策略信号诊断
@@ -99,7 +104,8 @@ Quant_A_SHARE_V2.0/
 │   │   └── run_recommendation.py   # [App] 每日推荐 (Daily Picks)
 │   │
 │   ├── live/                   # [实盘] 自动交易
-│   │   └── run_auto_trading.py     # [Live] 雪球实盘/模拟自动交易脚本
+│   │   ├── run_auto_trading.py     # [Live] 雪球实盘/模拟自动交易脚本
+│   │   └── run_weekly_rebalance.py # [New] 周度全仓换仓脚本
 │   │
 │   └── tools/                  # [工具] 辅助脚本
 │       └── start_tensorboard.py    # 启动 TensorBoard 训练监控
@@ -117,8 +123,9 @@ Quant_A_SHARE_V2.0/
 │   ├── data_source/            # 数据源适配层 (Facade模式)
 │   │
 │   ├── model/                  # 机器学习模块
-│   │   ├── trainer.py          # 训练流程管理器
+│   │   ├── trainer.py          # 训练流程管理器 (支持双头模型)
 │   │   ├── xgb_model.py        # XGBoost 模型封装
+│   │   ├── lgb_model.py        # [New] LightGBM 模型封装 (双头模型专用)
 │   │   └── training_monitor.py # TensorBoard 训练监控模块
 │   │
 │   ├── preprocessing/          # 预处理模块
@@ -559,6 +566,9 @@ python scripts/signal_diagnosis.py
 |------|------|
 | `model.label_col` | 目标标签列名 |
 | `model.params` | XGBoost 超参数 |
+| `model.dual_head.enable` | 是否启用双头模型 🆕 |
+| `model.dual_head.regression.weight` | 回归头融合权重 (默认 0.6) |
+| `model.dual_head.classification.weight` | 分类头融合权重 (默认 0.4) |
 | `model.early_stopping_rounds` | 早停耐心 |
 | `model.enable_tensorboard` | 是否启用监控 |
 | `model.use_feature_selection` | 是否启用特征筛选 |
@@ -580,6 +590,7 @@ python scripts/model_train/run_walkforward.py
 - 按年滚动：例如用 2010-2018 年数据训练，预测 2019 年；再用 2010-2019 年数据训练，预测 2020 年...
 - 支持 **扩张窗口** (Expanding) 或 **滚动窗口** (Rolling) 两种模式
 - 每年自动保存独立模型，最终合并为全量预测表
+- **双头模型支持 🆕**：启用后同时训练回归模型 (`model_reg_YYYY.joblib`) 和分类模型 (`model_cls_YYYY.joblib`)，预测结果自动融合
 
 ### 5.2 单次训练 (快速测试)
 
@@ -628,6 +639,73 @@ python scripts/analisis/explain_model.py --version 20251214_175849
 **输出图表 (`figures/interpretation/{version}/`)**：
 - **Summary Plot**: 特征重要性总览，展示因子数值大小与 SHAP 值的正负关系。
 - **Dependence Plot**: 单个特征的依赖图，展示特征值与预测贡献的非线性关系。
+
+### 5.6 双头模型 (Dual-Head Model) 🆕
+
+双头模型同时训练两个预测目标，融合后获得更稳健的选股信号：
+
+| 模型头 | 任务类型 | 预测目标 | 优势 |
+|--------|----------|----------|------|
+| **回归头** | Regression | 预测未来收益率 | 捕捉收益弹性 |
+| **分类头** | Classification | 预测涨跌方向 (0/1) | 提高方向准确率 |
+
+**融合公式**：
+```
+pred_score = α × normalize(pred_reg) + β × normalize(pred_cls)
+```
+
+**配置示例 (`config/main.yaml`)**：
+```yaml
+model:
+  dual_head:
+    enable: true
+    model_type: "lightgbm"
+    regression:
+      weight: 0.6
+    classification:
+      weight: 0.4
+      threshold: 0.0
+    fusion:
+      method: "weighted_average"
+      normalize: true
+```
+
+### 5.7 过拟合检测 🆕
+
+通过噪音注入测试评估模型是否存在过拟合：
+
+```bash
+python scripts/analisis/check_overfit.py
+```
+
+**检测逻辑**：
+- 向预测分数添加 5%、10%、20% 噪音
+- 对比噪音前后的收益衰减
+- **健康模型**：收益平缓下降
+- **过拟合模型**：收益急剧崩溃
+
+### 5.8 蒙特卡洛模拟分析 🆕
+
+通过多种随机模拟方法评估策略的稳健性和置信区间：
+
+```bash
+python scripts/analisis/check_monte_carlo.py
+```
+
+**模拟方法**：
+
+| 方法 | 描述 | 用途 |
+|------|------|------|
+| Bootstrap 重采样 | 有放回抽样历史信号 | 评估收益置信区间 |
+| 权重扰动 | 随机扰动 α/β 融合权重 | 评估权重敏感性 |
+| 噪音注入 | 向预测分添加噪音 | 评估模型抗干扰力 |
+| 时间窗口采样 | 随机采样时间区间 | 评估时间稳定性 |
+
+**输出报告 (`reports/monte_carlo/`)**：
+- `monte_carlo_distribution.png`: 收益/夏普/回撤分布图
+- `noise_sensitivity.png`: 噪音敏感性曲线
+- `weight_sensitivity.png`: 权重敏感性散点图
+- `monte_carlo_report.txt`: 统计汇总与置信区间
 
 ---
 
@@ -783,13 +861,17 @@ python scripts/live/run_auto_trading.py --real
 | 压力测试 | ✅ | 成本敏感性、熊市生存测试 |
 | 模型可解释性 (SHAP) | ✅ | 特征贡献度分析、依赖图 |
 | 实盘自动交易 (Live Trading) | ✅ | 对接雪球组合，全自动下单 |
+| **双头模型 (Dual-Head)** 🆕 | ✅ | 回归+分类融合，提升信号稳健性 |
+| **蒙特卡洛模拟** 🆕 | ✅ | Bootstrap/权重扰动/噪音注入，评估置信区间 |
+| **过拟合检测** 🆕 | ✅ | 噪音敏感性测试，诊断模型健康度 |
+| **周度全仓换仓** 🆕 | ✅ | 支持周度调仓模式 |
 
 ### 🚀 未来计划
 
 * **P1 (近期): 策略增强与风险评估**
-    * 引入 **Monte Carlo 模拟**，进行更全面的极端风险评估
     * 多模型融合 (XGBoost + LightGBM + CatBoost) 提升预测稳定性
     * 增加回测结果的交互式 HTML 报告，提供更丰富的图表交互
+    * 动态融合权重调整：根据市场环境自动调节 α/β
 
 * **P2 (中期): 深度学习生态**
     * 接入 LSTM / Transformer / TCN 等时序深度学习模型

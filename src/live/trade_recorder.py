@@ -147,10 +147,20 @@ class TradeRecorder:
             'profit': profit
         }
         
-        self.records = pd.concat([self.records, pd.DataFrame([new_record])], ignore_index=True)
+        new_record_df = pd.DataFrame([new_record])
+        if not new_record_df.empty:
+            # 确保类型一致以避免 FutureWarning
+            for col in new_record_df.columns:
+                if col in self.records.columns:
+                    new_record_df[col] = new_record_df[col].astype(self.records[col].dtype)
+            self.records = pd.concat([self.records, new_record_df], ignore_index=True)
         self._save_records()
         
-        profit_pct = (profit / (buy_price * quantity)) * 100
+        # 防止除零错误
+        if buy_price > 0 and quantity > 0:
+            profit_pct = (profit / (buy_price * quantity)) * 100
+        else:
+            profit_pct = 0.0
         logger.info(f"记录卖出: {symbol} x {quantity}股 @ {price}元, 盈亏: {profit:.2f}元 ({profit_pct:.2f}%)")
     
     def get_holdings(self):

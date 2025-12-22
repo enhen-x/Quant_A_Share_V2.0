@@ -118,11 +118,11 @@ class LabelGenerator:
             entry_price = price_entry.shift(-1)
             exit_price = price_exit.shift(-(1 + self.horizon))
             raw_ret = (exit_price / entry_price) - 1.0
-            logger.info(f"分类标签使用绝对涨幅模式, 阈值: {threshold:.4f}")
+            logger.debug(f"分类标签使用绝对涨幅模式, 阈值: {threshold:.4f}")
         else:
             # 使用超额收益 (已计算的 label 列)
             raw_ret = df["label"]
-            logger.info(f"分类标签使用超额涨幅模式, 阈值: {threshold:.4f}")
+            logger.debug(f"分类标签使用超额涨幅模式, 阈值: {threshold:.4f}")
         
         # 生成 0/1 标签
         df["label_cls"] = (raw_ret > threshold).astype(int)
@@ -132,7 +132,7 @@ class LabelGenerator:
         neg_count = (df["label_cls"] == 0).sum()
         total = pos_count + neg_count
         if total > 0:
-            logger.info(f"分类标签分布: 正样本(涨)={pos_count:,} ({pos_count/total:.1%}), "
+            logger.debug(f"分类标签分布: 正样本(涨)={pos_count:,} ({pos_count/total:.1%}), "
                        f"负样本(跌)={neg_count:,} ({neg_count/total:.1%})")
         
         return df

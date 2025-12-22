@@ -209,7 +209,7 @@ model:
   # === 新增：滚动训练配置 (Walk-Forward) ===
   walk_forward:
     enable: true
-    start_year: 2019         # [关键] 哪一年开始产生预测？(即 2020之前的都是初始训练集)
+    start_year: 2015         # [关键] 哪一年开始产生预测？(即 2015之前的都是初始训练集)
     train_window_type: "expanding" # "expanding" (扩张: 2010~T) 或 "rolling" (滚动: T-N~T)
     rolling_window_size: 3   # 仅当 rolling 时生效，训练窗口长度(年)
     update_freq: "yearly"    # 更新频率 (目前支持按年)
@@ -234,14 +234,14 @@ model:
     regression:
       enable: true
       label_mode: "excess_index"    # excess_index (超额收益) / absolute (绝对收益)
-      weight: 0.6                   # 融合权重 α
+      weight: 0.22                   # 融合权重 α
     
     # --- 分类头配置 (预测涨跌方向) ---
     classification:
       enable: true
       label_mode: "absolute"        # absolute (绝对涨跌) / excess_index (超额涨跌)
       threshold: 0.0                # 分类阈值: >threshold 为涨 (1), ≤threshold 为跌 (0)
-      weight: 0.4                   # 融合权重 β
+      weight: 0.78                   # 融合权重 β
     
     # --- 融合策略 ---
     fusion:
