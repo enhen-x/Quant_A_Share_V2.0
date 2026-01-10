@@ -133,8 +133,12 @@ def load_model(model_info):
         cls_model.load(model_info["cls_path"])
         return reg_model, cls_model
 
-def fuse_predictions(pred_reg, pred_cls, dual_head_cfg):
-    """融合双头模型预测结果"""
+def fuse_predictions(pred_df, dual_head_cfg):
+    """
+    融合双头模型预测结果
+    
+    修复：改为按天归一化，避免跨日期的预测值排序失真
+    """
     import numpy as np
     
     fusion_cfg = dual_head_cfg.get("fusion", {})
@@ -142,15 +146,21 @@ def fuse_predictions(pred_reg, pred_cls, dual_head_cfg):
     reg_weight = dual_head_cfg.get("regression", {}).get("weight", 0.6)
     cls_weight = dual_head_cfg.get("classification", {}).get("weight", 0.4)
     
+    pred_reg = pred_df["pred_reg"].values
+    pred_cls = pred_df["pred_cls"].values
+    
     if normalize:
-        def min_max_normalize(arr):
-            arr = np.array(arr)
-            min_val, max_val = arr.min(), arr.max()
-            if max_val - min_val < 1e-9:
-                return np.zeros_like(arr)
-            return (arr - min_val) / (max_val - min_val)
-        pred_reg = min_max_normalize(pred_reg)
-        pred_cls = min_max_normalize(pred_cls)
+        # [修复] 按天归一化，避免跨日期排序失真
+        def daily_min_max_normalize(series):
+            """按天进行 Min-Max 归一化"""
+            return pred_df.groupby("date")[series.name].transform(
+                lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9)
+            )
+        
+        pred_df["pred_reg_norm"] = daily_min_max_normalize(pred_df["pred_reg"])
+        pred_df["pred_cls_norm"] = daily_min_max_normalize(pred_df["pred_cls"])
+        
+        return reg_weight * pred_df["pred_reg_norm"].values + cls_weight * pred_df["pred_cls_norm"].values
     
     return reg_weight * pred_reg + cls_weight * pred_cls
 
@@ -237,7 +247,13 @@ def main():
         if is_dual_head:
             pred_reg = reg_model.predict(X_pred)
             pred_cls = cls_model.predict(X_pred)
-            pred_scores = fuse_predictions(pred_reg, pred_cls, dual_head_cfg)
+            
+            # 构造临时 DataFrame 用于按天归一化
+            temp_df = df_slice[["date", "symbol"]].copy()
+            temp_df["pred_reg"] = pred_reg
+            temp_df["pred_cls"] = pred_cls
+            
+            pred_scores = fuse_predictions(temp_df, dual_head_cfg)
             logger.info(f"双头融合预测完成 (权重: reg={dual_head_cfg.get('regression', {}).get('weight', 0.6)}, cls={dual_head_cfg.get('classification', {}).get('weight', 0.4)})")
         else:
             pred_scores = reg_model.predict(X_pred)

@@ -42,6 +42,71 @@ from src.backtest.backtester import VectorBacktester
 logger = get_logger()
 
 
+def fuse_predictions_dynamic(pred_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    动态融合预测分数 - 根据当前配置文件中的权重重新计算 pred_score
+    
+    如果 pred_reg 和 pred_cls 列存在，则使用配置权重融合；
+    否则直接使用已有的 pred_score。
+    """
+    dual_head_cfg = GLOBAL_CONFIG.get("model", {}).get("dual_head", {})
+    
+    has_reg = "pred_reg" in pred_df.columns
+    has_cls = "pred_cls" in pred_df.columns
+    
+    if not has_reg and not has_cls:
+        # 单模型训练，直接使用原有 pred_score
+        logger.info("检测到单模型预测，使用原有 pred_score")
+        return pred_df
+    
+    # 读取配置权重
+    reg_weight = dual_head_cfg.get("regression", {}).get("weight", 0.6)
+    cls_weight = dual_head_cfg.get("classification", {}).get("weight", 0.4)
+    normalize = dual_head_cfg.get("fusion", {}).get("normalize", True)
+    method = dual_head_cfg.get("fusion", {}).get("method", "weighted_average")
+    
+    logger.info(f"动态融合: 回归权重={reg_weight}, 分类权重={cls_weight}, 融合方法={method}")
+    
+    # 归一化函数
+    def min_max_normalize(arr):
+        arr = np.array(arr)
+        min_val, max_val = np.nanmin(arr), np.nanmax(arr)
+        if max_val - min_val > 1e-8:
+            return (arr - min_val) / (max_val - min_val)
+        return np.zeros_like(arr)
+    
+    pred_reg = pred_df["pred_reg"].values if has_reg else None
+    pred_cls = pred_df["pred_cls"].values if has_cls else None
+    
+    # 归一化
+    if normalize:
+        if pred_reg is not None:
+            pred_reg = min_max_normalize(pred_reg)
+        if pred_cls is not None:
+            pred_cls = min_max_normalize(pred_cls)
+    
+    # 融合
+    if method == "weighted_average":
+        if pred_reg is not None and pred_cls is not None:
+            fused = reg_weight * pred_reg + cls_weight * pred_cls
+        elif pred_reg is not None:
+            fused = pred_reg
+        else:
+            fused = pred_cls
+    elif method == "multiplicative":
+        if pred_reg is not None and pred_cls is not None:
+            fused = pred_reg * pred_cls
+        elif pred_reg is not None:
+            fused = pred_reg
+        else:
+            fused = pred_cls
+    else:
+        fused = pred_reg if pred_reg is not None else pred_cls
+    
+    pred_df["pred_score"] = fused
+    return pred_df
+
+
 def get_latest_predictions():
     """获取最新的预测文件"""
     models_dir = GLOBAL_CONFIG["paths"]["models"]
@@ -58,7 +123,10 @@ def get_latest_predictions():
     
     if os.path.exists(pred_path):
         logger.info(f"使用预测文件: {pred_path}")
-        return read_parquet(pred_path), latest_dir
+        pred_df = read_parquet(pred_path)
+        # 动态融合预测分数
+        pred_df = fuse_predictions_dynamic(pred_df)
+        return pred_df, latest_dir
     return None, None
 
 
