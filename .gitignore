@@ -61,3 +61,6 @@ data/live_trading/*
 !data/live_trading/.gitkeep
 !data/live_trading/*.example.txt
 
+
+# Temp
+temp_junk/
