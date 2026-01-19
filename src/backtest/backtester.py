@@ -31,11 +31,23 @@ from src.utils.config import GLOBAL_CONFIG
 from src.utils.io import read_parquet, ensure_dir
 
 # Matplotlib 字体配置（解决中文和减号显示问题）
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'sans-serif']
-plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['axes.unicode_minus'] = False  # 使用 ASCII 减号代替 Unicode 减号
-plt.rcParams['mathtext.fontset'] = 'stix'   # 数学公式字体集
-plt.rcParams['mathtext.default'] = 'regular'  # 数学文本默认字体
+import warnings
+import logging
+
+# 抑制所有字体 glyph 相关的警告
+warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
+warnings.filterwarnings('ignore', message='.*glyph.*')
+
+# 禁用 matplotlib 的字体警告日志（这些是通过 logging 模块输出的）
+logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
+logging.getLogger('matplotlib.backends').setLevel(logging.ERROR)
+
+plt.rcParams.update({
+    'font.sans-serif': ['SimHei', 'Microsoft YaHei', 'DejaVu Sans', 'sans-serif'],
+    'font.family': 'sans-serif',
+    'axes.unicode_minus': False,  # 使用 ASCII 减号
+    'mathtext.fontset': 'dejavusans',  # 使用 DejaVu Sans 数学字体
+})
 
 
 logger = get_logger()
@@ -568,46 +580,57 @@ class VectorBacktester:
         # ====================================================================
         # 【字体设置】在每次绘图前强制设置，以应对外部样式覆盖
         # ====================================================================
-        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'sans-serif']
-        plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['axes.unicode_minus'] = False  # 使用 ASCII 减号代替 Unicode 减号
-        plt.rcParams['mathtext.fontset'] = 'stix'
-        plt.rcParams['mathtext.default'] = 'regular'
+        import sys
+        import io
+        
+        plt.rcParams.update({
+            'font.sans-serif': ['SimHei', 'Microsoft YaHei', 'DejaVu Sans', 'sans-serif'],
+            'font.family': 'sans-serif',
+            'axes.unicode_minus': False,  # 使用 ASCII 减号
+            'mathtext.fontset': 'dejavusans',  # 使用 DejaVu Sans 数学字体
+        })
+        
+        # 临时抑制 matplotlib 直接打印的字体警告
+        old_stderr = sys.stderr
+        sys.stderr = io.StringIO()
         # ====================================================================
 
-
-        # 创建 2 行 1 列的子图布局
-        fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+        try:
+            # 创建 2 行 1 列的子图布局
+            fig, axes = plt.subplots(2, 1, figsize=(12, 10))
         
-        # ------------------------------------------------------------------
-        # 上图：线性刻度净值曲线
-        # ------------------------------------------------------------------
-        ax1 = axes[0]
-        # 绘制策略净值曲线（红色实线）
-        equity.plot(ax=ax1, label="Strategy", color="red", linewidth=2)
-        # 绘制基准净值曲线（灰色虚线）
-        if benchmark is not None:
-            benchmark.plot(ax=ax1, label="Benchmark", color="gray", linestyle="--", alpha=0.7)
-        # 设置标题，包含关键绩效指标
-        ax1.set_title(f"Backtest {title_suffix}\nAnn Ret: {metrics['annual_return']:.1%} | Sharpe: {metrics['sharpe']:.2f} | MaxDD: {metrics['max_drawdown']:.1%}")
-        ax1.legend(loc="upper left")
-        ax1.grid(True, linestyle="--", alpha=0.5)
-        
-        # ------------------------------------------------------------------
-        # 下图：对数刻度净值曲线
-        # ------------------------------------------------------------------
-        # 对数刻度能更好地展示长期复利增长
-        # 在对数坐标下，稳定的复利增长会呈现为直线
-        ax2 = axes[1]
-        equity.plot(ax=ax2, label="Strategy", color="red", linewidth=2)
-        if benchmark is not None:
-            benchmark.plot(ax=ax2, label="Benchmark", color="gray", linestyle="--", alpha=0.7)
-        ax2.set_yscale('log')  # 设置 Y 轴为对数刻度
-        ax2.set_title("Backtest (Log Scale)")
-        ax2.legend(loc="upper left")
-        ax2.grid(True, linestyle="--", alpha=0.5, which='both')  # which='both' 显示主次网格线
-        
-        # 调整子图间距并保存
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "equity_curve.png"))
-        plt.close()  # 关闭图形释放内存
+            # ------------------------------------------------------------------
+            # 上图：线性刻度净值曲线
+            # ------------------------------------------------------------------
+            ax1 = axes[0]
+            # 绘制策略净值曲线（红色实线）
+            equity.plot(ax=ax1, label="Strategy", color="red", linewidth=2)
+            # 绘制基准净值曲线（灰色虚线）
+            if benchmark is not None:
+                benchmark.plot(ax=ax1, label="Benchmark", color="gray", linestyle="--", alpha=0.7)
+            # 设置标题，包含关键绩效指标
+            ax1.set_title(f"Backtest {title_suffix}\nAnn Ret: {metrics['annual_return']:.1%} | Sharpe: {metrics['sharpe']:.2f} | MaxDD: {metrics['max_drawdown']:.1%}")
+            ax1.legend(loc="upper left")
+            ax1.grid(True, linestyle="--", alpha=0.5)
+            
+            # ------------------------------------------------------------------
+            # 下图：对数刻度净值曲线
+            # ------------------------------------------------------------------
+            # 对数刻度能更好地展示长期复利增长
+            # 在对数坐标下，稳定的复利增长会呈现为直线
+            ax2 = axes[1]
+            equity.plot(ax=ax2, label="Strategy", color="red", linewidth=2)
+            if benchmark is not None:
+                benchmark.plot(ax=ax2, label="Benchmark", color="gray", linestyle="--", alpha=0.7)
+            ax2.set_yscale('log')  # 设置 Y 轴为对数刻度
+            ax2.set_title("Backtest (Log Scale)")
+            ax2.legend(loc="upper left")
+            ax2.grid(True, linestyle="--", alpha=0.5, which='both')  # which='both' 显示主次网格线
+            
+            # 调整子图间距并保存
+            plt.tight_layout()
+            plt.savefig(os.path.join(out_dir, "equity_curve.png"))
+            plt.close()  # 关闭图形释放内存
+        finally:
+            # 恢复 stderr
+            sys.stderr = old_stderr

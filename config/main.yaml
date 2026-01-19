@@ -140,7 +140,7 @@ preprocessing:
 
     use_vwap: true         # 开启 VWAP 计价
     filter_limit: true     # 开启一字板过滤
-    index_code: "000300.SH"
+    index_code: "000852.SH"
     index_dir: "index"
     
     binary_threshold: 0.0
