@@ -148,6 +148,13 @@ preprocessing:
       up: 0.01
       down: -0.01
     quantile_bins: [0.2, 0.8]
+    
+    # === 新增：风险标签配置 ===
+    risk_label:
+      enable: true                    # 启用风险标签生成
+      type: "downside_deviation"      # volatility / downside_deviation / max_drawdown
+      window: 20                      # 计算窗口（天数）
+      min_periods: 10                 # 最小有效周期
 
 
 
@@ -202,8 +209,8 @@ model:
     tree_method: "hist"        # 构建树的方法
     device: "cuda"             # 使用 GPU 训练 (XGBoost 3.x 新参数)
   
-  # 早停耐心（增加到 100 轮）
-  early_stopping_rounds: 100
+  # 早停耐心（增加到 200 轮）
+  early_stopping_rounds: 200
 
 
   # === 新增：滚动训练配置 (Walk-Forward) ===
@@ -224,47 +231,95 @@ model:
   use_feature_selection: true  # 启用特征筛选（使用 selected_features.txt）
 
   # ==============================================================================
-  # === 新增：双头模型配置 (Dual-Head Model) ===
+  # === 双头模型配置 (Dual-Head Model: Return + Risk Prediction) ===
   # ==============================================================================
   dual_head:
-    enable: true                    # 是否启用双头系统 (设为 true 后启用)
-    model_type: "lightgbm"          # 模型类型: lightgbm / xgboost
+    enable: true                    # 是否启用双头系统
+    model_type: "xgboost"           # 统一模型类型: xgboost / lightgbm
     
-    # --- 回归头配置 (预测收益率) ---
-    regression:
-      enable: true
-      label_mode: "excess_index"    # excess_index (超额收益) / absolute (绝对收益)
-      weight: 0.6                    # 融合权重 α (回归为主)
+    # --- 收益预测头参数 (适用于任何model_type) ---
+    params_return:
+      n_estimators: 3000
+      max_depth: 5
+      learning_rate: 0.008
+      subsample: 0.8
+      colsample_bytree: 0.8
+      reg_alpha: 0.1
+      reg_lambda: 1.0
+      # XGBoost专用参数
+      min_child_weight: 3
+      gamma: 0.1
+      tree_method: "hist"
+      device: "cuda"  # 如果切换到cpu，则device: "cpu"  # 或直接移除这行
+      # LightGBM专用参数（如果model_type=lightgbm时使用）
+      num_leaves: 63
+      min_child_samples: 20
     
-    # --- 分类头配置 (预测涨跌方向) ---
-    classification:
+    # --- 风险预测头参数 (适用于任何model_type) ---
+    params_risk:
+      n_estimators: 3000             # 比收益头更少
+      max_depth: 5
+      learning_rate: 0.008           # 比收益头更低
+      subsample: 0.8
+      colsample_bytree: 0.8
+      reg_alpha: 0.1
+      reg_lambda: 1.0
+      early_stopping_rounds: 100       # 更激进的early stopping
+      # XGBoost专用参数
+      min_child_weight: 3
+      gamma: 0.1
+      tree_method: "hist"
+      device: "cuda"
+      # LightGBM专用参数
+      num_leaves: 63
+      min_child_samples: 20
+    
+    # --- 收益预测头配置 ---
+    return_head:
       enable: true
-      label_mode: "absolute"        # absolute (绝对涨跌) / excess_index (超额涨跌)
-      threshold: 0.0                # 分类阈值: >threshold 为涨 (1), ≤threshold 为跌 (0)
-      weight: 0.4                    # 融合权重 β (分类辅助过滤)
+      label_col: "label"
+      weight: 0.6
+    
+    # --- 风险预测头配置 ---
+    risk_head:
+      enable: true
+      label_col: "label_risk"
+      risk_type: "downside_deviation"
+      window: 20
+      weight: 0.4
     
     # --- 融合策略 ---
+    # 将收益预测(pred_return)和风险预测(pred_risk)融合为最终分数(pred_score)
     fusion:
-      method: "weighted_average"    # 融合方法: weighted_average / multiplicative
-      normalize: true               # 融合前是否对两个预测进行归一化
+      method: "utility"          
+      # 融合方法，可选:
+      # 1. rank_ratio - 排名比率法
+      #    公式: rank(return) / (rank(risk) + ε)
+      #    特点: 稳健，对异常值不敏感，结果归一化到[0,1]
+      #    适用: 数据质量参差不齐时
+      # 
+      # 2. sharpe_like - Sharpe式比率 ⭐推荐
+      #    公式: pred_return / (pred_risk + ε)
+      #    特点: 直接优化风险收益比，高收益低风险股票得分高
+      #    适用: 追求高夏普比率策略 (回测: 年化78%, 夏普5.75)
+      # 
+      # 3. utility - 效用函数
+      #    公式: pred_return - risk_aversion * (pred_risk²)
+      #    特点: 可调节风险厌恶系数，符合经济学理论
+      #    适用: 需要精确控制风险偏好
+      # 
+      # 4. weighted_average - 加权平均
+      #    公式: w_return*norm(return) - w_risk*norm(risk)
+      #    特点: 手动设置权重，需要调参
+      #    适用: 向后兼容旧版本
 
-  # === LightGBM 参数 (双头模型使用) ===
-  lgb_params:
-    n_estimators: 3000
-    max_depth: 6
-    learning_rate: 0.02
-    num_leaves: 63
-    subsample: 0.8
-    colsample_bytree: 0.8
-    reg_alpha: 0.1
-    reg_lambda: 1.0
-    min_child_samples: 20
-    device: "gpu"                   # gpu / cpu
-    verbose: -1
+      normalize: true                # 融合前是否归一化 (仅weighted_average使用)
+      risk_aversion: 2             # 风险厌恶系数 (仅utility方法使用，越大越厌恶风险)
 
 
 # ==============================================================================
 # 5. 策略配置 (Strategy)
+# ==============================================================================
 
 # ==============================================================================
 strategy:

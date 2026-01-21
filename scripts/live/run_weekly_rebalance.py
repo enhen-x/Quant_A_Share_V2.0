@@ -97,7 +97,7 @@ class WeeklyRebalanceConfig:
         print(f"配置文件: {self.config_file}")
         print()
         print("雪球配置:")
-        print(f"  Cookies: {'已设置 ✓' if self.cookies else '未设置 ✗'}")
+        print(f"  Cookies: {'已设置 [OK]' if self.cookies else '未设置 [MISSING]'}")
         print(f"  组合代码: {self.portfolio_code}")
         print(f"  交易市场: {self.portfolio_market}")
         print()
@@ -122,7 +122,7 @@ def load_today_picks(max_stocks=10):
         return None
     
     latest_file = max(matching_files, key=lambda x: x.stat().st_mtime)
-    logger.info(f"✅ 找到推荐文件: {latest_file.name}")
+    logger.info(f"[OK] 找到推荐文件: {latest_file.name}")
     
     df = pd.read_csv(latest_file, dtype={'symbol': str})
     if 'symbol' in df.columns:
@@ -136,6 +136,24 @@ def load_today_picks(max_stocks=10):
     
     logger.info(f"加载推荐: {len(df)} 只股票")
     return df
+
+
+class CookieInvalidError(Exception):
+    """Cookie 失效异常"""
+    pass
+
+
+def safe_adjust_weight(broker, symbol, weight):
+    """安全调仓，捕获 Cookie 失效错误"""
+    try:
+        broker.user.adjust_weight(symbol, weight)
+    except Exception as e:
+        if "stocks" in str(e) and isinstance(e, KeyError):
+            print(f"\n[ERROR] ❌ 调仓失败 ({symbol}): Cookie 已失效！")
+            print("👉 请运行 python scripts/live/check_xq_cookie.py 检查并更新 Cookie")
+            raise CookieInvalidError("CookieInvalid")
+        else:
+            raise e
 
 
 def main(dry_run=False):
@@ -153,14 +171,14 @@ def main(dry_run=False):
         config = WeeklyRebalanceConfig()
         config.validate()
         config.show()
-        print("\n✅ 配置验证通过\n")
+        print("\n[OK] 配置验证通过\n")
     except Exception as e:
-        print(f"\n❌ 配置加载失败: {e}")
+        print(f"\n[ERROR] 配置加载失败: {e}")
         return
     
     # 确认操作
     if not dry_run:
-        print("\n⚠️  真实模式：将执行以下操作：")
+        print("\n[WARNING]  真实模式：将执行以下操作：")
         print("   1. 卖出所有现有持仓")
         print("   2. 买入今日推荐股票")
         confirm = input("\n确认继续？(输入 yes 继续): ")
@@ -168,7 +186,7 @@ def main(dry_run=False):
             print("已取消")
             return
     else:
-        print("\n🔸 模拟模式：不会实际下单")
+        print("\n[INFO] 模拟模式：不会实际下单")
     
     # 步骤 1：连接雪球
     print("\n" + "=" * 70)
@@ -194,7 +212,7 @@ def main(dry_run=False):
     
     picks = load_today_picks(config.max_stocks)
     if picks is None or picks.empty:
-        print("\n❌ 未找到今日推荐，请先运行推荐脚本")
+        print("\n[ERROR] 未找到今日推荐，请先运行推荐脚本")
         return
     
     # 计算等权权重
@@ -229,14 +247,14 @@ def main(dry_run=False):
     logger.info(f"需卖出: {len(to_sell)} 只")
     
     if dry_run:
-        print("\n🔸 [模拟] 换仓计划:")
+        print("\n[INFO] [模拟] 换仓计划:")
         if to_keep:
             print(f"   保持: {list(to_keep)}")
         if to_buy:
             print(f"   买入: {list(to_buy)}")
         if to_sell:
             print(f"   卖出: {list(to_sell)}")
-        print("\n🔸 [模拟] 模拟模式完成，未实际下单")
+        print("\n[INFO] [模拟] 模拟模式完成，未实际下单")
     else:
         try:
             # 先买后卖策略：
@@ -244,29 +262,32 @@ def main(dry_run=False):
             # 2. 再卖出旧股票（设置权重为0）
             # 3. 最后调整所有新持仓到目标权重
             
-            print("\n📈 执行买入...")
+            print("\n[BUY] 执行买入...")
             for symbol in to_buy:
                 weight = weight_per_stock
                 logger.info(f"  买入 {symbol} 权重: {weight:.2f}%")
-                broker.user.adjust_weight(symbol, weight)
+                safe_adjust_weight(broker, symbol, weight)
             
-            print("\n📉 执行卖出...")
+            print("\n[SELL] 执行卖出...")
             for symbol in to_sell:
                 logger.info(f"  卖出 {symbol} (权重 -> 0)")
-                broker.user.adjust_weight(symbol, 0)
+                safe_adjust_weight(broker, symbol, 0)
             
-            print("\n⚖️ 调整权重...")
+            print("\n[ADJUST] 调整权重...")
             for holding in new_holdings:
                 symbol = holding['symbol']
                 weight = holding['weight']
                 logger.info(f"  调整 {symbol} -> {weight:.2f}%")
-                broker.user.adjust_weight(symbol, weight)
+                safe_adjust_weight(broker, symbol, weight)
             
-            print("\n✅ 全仓换股成功!")
+            print("\n[OK] 全仓换股成功!")
             print(f"   新持仓: {len(new_holdings)} 只股票")
+
+        except CookieInvalidError:
+            print("\n[INFO] 程序因 Cookie 失效终止，请更新 Cookie 后重试。")
             
         except Exception as e:
-            print(f"\n❌ 换仓异常: {e}")
+            print(f"\n[ERROR] 换仓异常: {e}")
             import traceback
             traceback.print_exc()
     
@@ -297,9 +318,9 @@ if __name__ == '__main__':
             config = WeeklyRebalanceConfig()
             config.validate()
             config.show()
-            print("\n✅ 配置有效")
+            print("\n[OK] 配置有效")
         except Exception as e:
-            print(f"\n❌ 配置无效: {e}")
+            print(f"\n[ERROR] 配置无效: {e}")
             sys.exit(1)
         sys.exit(0)
     

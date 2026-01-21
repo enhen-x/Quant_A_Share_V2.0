@@ -54,13 +54,13 @@ class WalkForwardRunner:
         # 确保日期列为 datetime
         df["date"] = pd.to_datetime(df["date"])
         
-        # 双头模型: 检查分类标签
-        label_cls = "label_cls"
+        # 双头模型: 检查风险标签
+        label_risk = "label_risk"
         if self.dual_head_enabled:
-            if label_cls not in df.columns:
-                logger.error(f"未找到分类标签列 '{label_cls}'，请确保启用双头模型后重新运行 pipeline")
-                raise ValueError(f"缺少分类标签列 '{label_cls}'")
-            logger.info(f"分类标签 '{label_cls}' 已加载")
+            if label_risk not in df.columns:
+                logger.error(f"未找到风险标签列 '{label_risk}'，请确保在 pipeline 中生成风险标签")
+                raise ValueError(f"缺少风险标签列 '{label_risk}'")
+            logger.info(f"风险标签 '{label_risk}' 已加载")
         
         # 获取所有包含的年份
         data_years = sorted(df["date"].dt.year.unique())
@@ -113,33 +113,40 @@ class WalkForwardRunner:
             
             # --- C. 训练模型 ---
             if self.dual_head_enabled:
-                # ========== 双头模型训练 ==========
-                y_train_reg = df.loc[train_mask, label]
-                y_train_cls = df.loc[train_mask, label_cls]
-                y_test_reg = df.loc[test_mask, label]
-                y_test_cls = df.loc[test_mask, label_cls]
+                # ========== 双头模型训练 (收益+风险) ==========
+                y_train_return = df.loc[train_mask, label]
+                y_train_risk = df.loc[train_mask, label_risk]
+                y_test_return = df.loc[test_mask, label]
+                y_test_risk = df.loc[test_mask, label_risk]
                 
-                reg_model, cls_model = trainer.train_dual_head(
-                    X_train, y_train_reg, y_train_cls,
-                    X_test, y_test_reg, y_test_cls,
+                return_model, risk_model = trainer.train_dual_head(
+                    X_train, y_train_return, y_train_risk,
+                    X_test, y_test_return, y_test_risk,
                     feature_names=features
                 )
                 
                 # --- D. 保存当年模型 ---
-                if reg_model is not None:
-                    reg_model.save(os.path.join(self.output_dir, f"model_reg_{year}.joblib"))
-                if cls_model is not None:
-                    cls_model.save(os.path.join(self.output_dir, f"model_cls_{year}.joblib"))
+                # XGBoost使用.ubj，LightGBM使用.joblib
+                model_type = self.dual_head_cfg.get("model_type", "xgboost")
+                if model_type == "xgboost":
+                    ext = ".ubj"
+                else:
+                    ext = ".joblib"
+                
+                if return_model is not None:
+                    return_model.save(os.path.join(self.output_dir, f"model_return_{year}{ext}"))
+                if risk_model is not None:
+                    risk_model.save(os.path.join(self.output_dir, f"model_risk_{year}{ext}"))
                 
                 # --- E. 生成预测 ---
-                pred_reg = reg_model.predict(X_test) if reg_model else None
-                pred_cls = cls_model.predict(X_test) if cls_model else None
-                pred_scores = trainer.fuse_predictions(pred_reg, pred_cls)
+                pred_return = return_model.predict(X_test) if return_model else None
+                pred_risk = risk_model.predict(X_test) if risk_model else None
+                pred_scores = trainer.fuse_predictions(pred_return, pred_risk)
                 
                 # 构造结果片段
-                res_df = df.loc[test_mask, ["date", "symbol", "close", label, label_cls]].copy()
-                res_df["pred_reg"] = pred_reg
-                res_df["pred_cls"] = pred_cls
+                res_df = df.loc[test_mask, ["date", "symbol", "close", label, label_risk]].copy()
+                res_df["pred_return"] = pred_return
+                res_df["pred_risk"] = pred_risk
                 res_df["pred_score"] = pred_scores
                 
             else:
@@ -179,8 +186,10 @@ class WalkForwardRunner:
             logger.info(f"覆盖年份: {full_pred_df['date'].dt.year.unique()}")
             
             if self.dual_head_enabled:
-                logger.info(f"双头模型权重: 回归={self.dual_head_cfg.get('regression', {}).get('weight', 0.6)}, "
-                           f"分类={self.dual_head_cfg.get('classification', {}).get('weight', 0.4)}")
+                model_type = self.dual_head_cfg.get("model_type", "unknown")
+                fusion_method = self.dual_head_cfg.get("fusion", {}).get("method", "rank_ratio")
+                logger.info(f"双头模型类型: {model_type.upper()}")
+                logger.info(f"双头模型融合方法: {fusion_method}")
             
             # 自动生成 config 备份 (方便追溯)
             import yaml

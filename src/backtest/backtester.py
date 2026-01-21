@@ -446,6 +446,10 @@ class VectorBacktester:
         self._plot_result(equity_curve, benchmark_curve, metrics, output_dir, 
                          title_suffix=f"(Cost={current_cost*1000:.1f}‰)")
         
+        # 生成每日收益对比图
+        if benchmark_curve is not None:
+            self._plot_daily_comparison(daily_ret_net, benchmark_curve, output_dir)
+        
         logger.info(f"年化收益率: {metrics['annual_return']:.2%}")
         logger.info(f"夏普比率: {metrics['sharpe']:.2f}")
         logger.info(f"最大回撤: {metrics['max_drawdown']:.2%}")
@@ -634,3 +638,154 @@ class VectorBacktester:
         finally:
             # 恢复 stderr
             sys.stderr = old_stderr
+    
+    def _plot_daily_comparison(self, daily_ret_strategy, benchmark_curve, out_dir):
+        """绘制策略与大盘的对比分析图 - 改进版"""
+        # 设置字体配置，避免Unicode负号警告
+        plt.rcParams['axes.unicode_minus'] = False
+        
+        # 计算大盘每日收益
+        benchmark_ret = benchmark_curve.pct_change().fillna(0)
+        
+        # 对齐日期
+        common_dates = daily_ret_strategy.index.intersection(benchmark_ret.index)
+        if len(common_dates) == 0:
+            return
+        
+        strategy_ret = daily_ret_strategy.loc[common_dates]
+        bench_ret = benchmark_ret.loc[common_dates]
+        excess_ret = strategy_ret - bench_ret
+        
+        # 计算累计收益曲线
+        strategy_cumret = (1 + strategy_ret).cumprod()
+        bench_cumret = (1 + bench_ret).cumprod()
+        
+        # 创建图表
+        fig = plt.figure(figsize=(16, 12))
+        
+        # ========== 子图1: 累计收益曲线对比（最直观） ==========
+        ax1 = plt.subplot(3, 1, 1)
+        
+        # 绘制累计收益曲线（使用净值而非百分比，避免对数刻度问题）
+        ax1.plot(common_dates, strategy_cumret.values, 
+                label='策略累计净值', color='red', linewidth=2.5, alpha=0.9)
+        ax1.plot(common_dates, bench_cumret.values, 
+                label='大盘累计净值', color='gray', linewidth=2, linestyle='--', alpha=0.7)
+        
+        # 填充区域突出差异
+        ax1.fill_between(common_dates, strategy_cumret.values, bench_cumret.values,
+                         where=(strategy_cumret.values >= bench_cumret.values),
+                         color='green', alpha=0.2, label='跑赢区域')
+        ax1.fill_between(common_dates, strategy_cumret.values, bench_cumret.values,
+                         where=(strategy_cumret.values < bench_cumret.values),
+                         color='red', alpha=0.2, label='跑输区域')
+        
+        ax1.axhline(y=1.0, color='black', linestyle='-', linewidth=0.8)  # 1.0 = 基准线
+        ax1.set_ylabel('累计净值', fontsize=12, fontweight='bold')
+        ax1.set_yscale('log')  # 使用对数刻度
+        ax1.set_title('策略 vs 大盘 - 累计净值对比 (对数刻度)', fontsize=14, fontweight='bold')
+        ax1.legend(loc='best', fontsize=9, framealpha=0.9)
+        ax1.grid(True, alpha=0.3, which='both')
+        
+        # 设置日期格式
+        import matplotlib.dates as mdates
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        ax1.xaxis.set_major_locator(mdates.YearLocator())
+        plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        # 添加关键统计信息（移动到右上角避免与图例重叠）
+        final_strategy = (strategy_cumret.iloc[-1] - 1) * 100
+        final_bench = (bench_cumret.iloc[-1] - 1) * 100
+        excess_total = final_strategy - final_bench
+        
+        stats_box = f"策略总收益: {final_strategy:.1f}%\n"
+        stats_box += f"大盘总收益: {final_bench:.1f}%\n"
+        stats_box += f"超额收益: {excess_total:.1f}%"
+        ax1.text(0.98, 0.98, stats_box, transform=ax1.transAxes,
+                fontsize=10, verticalalignment='top', horizontalalignment='right',
+                fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
+        
+        # ========== 子图2: 30日滚动累计收益（绝对值） ==========
+        ax2 = plt.subplot(3, 1, 2)
+        
+        # 计算30天滚动累计收益（累乘）
+        rolling_window = 30
+        rolling_strategy = pd.Series((1 + strategy_ret.values)).rolling(rolling_window).apply(lambda x: (x.prod() - 1) * 100, raw=True)
+        rolling_bench = pd.Series((1 + bench_ret.values)).rolling(rolling_window).apply(lambda x: (x.prod() - 1) * 100, raw=True)
+        
+        # 绘制双线图
+        ax2.plot(common_dates, rolling_strategy, color='red', linewidth=2, label=f'{rolling_window}日策略收益', alpha=0.9)
+        ax2.plot(common_dates, rolling_bench, color='gray', linewidth=2, linestyle='--', label=f'{rolling_window}日大盘收益', alpha=0.7)
+        
+        ax2.axhline(y=0, color='black', linestyle='-', linewidth=1.0)
+        ax2.fill_between(common_dates, 0, rolling_strategy, where=(rolling_strategy > 0), color='red', alpha=0.2)
+        ax2.fill_between(common_dates, 0, rolling_bench, where=(rolling_bench > 0), color='gray', alpha=0.2)
+        
+        ax2.set_ylabel(f'{rolling_window}日滚动累计收益 (%)', fontsize=12)
+        ax2.set_title(f'{rolling_window}日滚动累计收益对比', fontsize=12)
+        ax2.legend(loc='best', fontsize=9, framealpha=0.9)
+        ax2.grid(True, alpha=0.3)
+        
+        # 设置日期格式
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        ax2.xaxis.set_major_locator(mdates.YearLocator())
+        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        # ========== 子图3: 30日滚动超额收益（相对值） ==========
+        ax3 = plt.subplot(3, 1, 3)
+        
+        # 计算30天滚动超额收益（累乘）
+        rolling_window = 30
+        rolling_excess_cum = pd.Series((1 + excess_ret.values)).rolling(rolling_window).apply(lambda x: (x.prod() - 1) * 100, raw=True)
+        
+        # 绘制柱状图
+        colors = ['green' if x > 0 else 'red' for x in rolling_excess_cum]
+        ax3.bar(common_dates, rolling_excess_cum, color=colors, alpha=0.6, width=1.0)
+        
+        ax3.axhline(y=0, color='black', linestyle='-', linewidth=1.0)
+        ax3.fill_between(common_dates, 0, rolling_excess_cum, 
+                         where=(rolling_excess_cum > 0), 
+                         color='green', alpha=0.2)
+        ax3.fill_between(common_dates, 0, rolling_excess_cum, 
+                         where=(rolling_excess_cum <= 0), 
+                         color='red', alpha=0.2)
+        
+        ax3.set_ylabel(f'{rolling_window}日滚动超额收益 (%)', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('日期', fontsize=11)
+        ax3.set_title(f'{rolling_window}日滚动累计超额收益 (绿色=跑赢, 红色=跑输)', fontsize=12)
+        ax3.grid(True, alpha=0.3)
+        
+        # 设置日期格式
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        ax3.xaxis.set_major_locator(mdates.YearLocator())
+        plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        # 详细统计信息
+        win_days = (excess_ret > 0).sum()
+        total_days = len(excess_ret)
+        win_rate = win_days / total_days
+        avg_win = excess_ret[excess_ret > 0].mean() * 100 if (excess_ret > 0).any() else 0
+        avg_loss = excess_ret[excess_ret < 0].mean() * 100 if (excess_ret < 0).any() else 0
+        
+        # 计算累计超额收益用于统计
+        cumulative_excess = (1 + excess_ret).cumprod() - 1
+        
+        stats_text = f"跑赢天数: {win_days}/{total_days} ({win_rate*100:.1f}%)\n"
+        stats_text += f"累计超额: {cumulative_excess.iloc[-1]*100:.2f}%\n"
+        stats_text += f"平均跑赢日: +{avg_win:.3f}%\n"
+        stats_text += f"平均跑输日: {avg_loss:.3f}%"
+        
+        # 移动到右上角避免与图例重叠
+        ax3.text(0.98, 0.98, stats_text, transform=ax3.transAxes,
+                fontsize=9, verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, "daily_comparison.png"), dpi=120)
+        plt.close()
+        
+        logger.info(f"每日对比图已保存: {os.path.join(out_dir, 'daily_comparison.png')}")
+        logger.info(f"策略总收益: {final_strategy:.2f}% | 大盘总收益: {final_bench:.2f}%")
+        logger.info(f"累计超额收益: {excess_total:.2f}%")
+        logger.info(f"跑赢天数: {win_days}/{total_days} ({win_rate*100:.1f}%)")

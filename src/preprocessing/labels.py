@@ -19,6 +19,9 @@ class LabelGenerator:
         self.use_vwap = self.cfg.get("use_vwap", True)
         self.filter_limit = self.cfg.get("filter_limit", True)
         
+        # [新增] 日志控制标志
+        self._risk_label_logged = False
+        
         # [新增] Winsorize 配置
         self.enable_winsorize = self.cfg.get("enable_winsorize", False)
         self.winsorize_limits = self.cfg.get("winsorize_limits", [0.01, 0.99])
@@ -34,6 +37,10 @@ class LabelGenerator:
         # [新增] 双头模型配置
         self.dual_head_cfg = config.get("model", {}).get("dual_head", {})
         self.dual_head_enabled = self.dual_head_cfg.get("enable", False)
+        
+        # [新增] 风险标签配置
+        self.risk_label_cfg = config.get("preprocessing", {}).get("labels", {}).get("risk_label", {})
+        self.risk_label_enabled = self.risk_label_cfg.get("enable", False)
         
         # 加载指数数据
         self.df_index = None
@@ -92,11 +99,15 @@ class LabelGenerator:
         if self.enable_winsorize:
             self._apply_winsorization(df)
         
-        # [新增] 5. 双头模型分类标签生成
+        # [已废弃] 5. 双头模型分类标签生成（保留向后兼容）
         if self.dual_head_enabled:
             cls_cfg = self.dual_head_cfg.get("classification", {})
-            if cls_cfg.get("enable", True):
+            if cls_cfg.get("enable", False):  # 默认关闭
                 df = self._generate_classification_label(df, price_for_entry, price_for_exit)
+        
+        # [新增] 6. 风险标签生成
+        if self.risk_label_enabled or (self.dual_head_enabled and self.dual_head_cfg.get("risk_head", {}).get("enable", False)):
+            df = self._generate_risk_label(df)
 
         return df
     
@@ -237,3 +248,79 @@ class LabelGenerator:
         # q_low = df["label"].quantile(lower_q)
         # q_high = df["label"].quantile(upper_q)
         # df["label"] = df["label"].clip(lower=q_low, upper=q_high)
+
+    def _generate_risk_label(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        [新增] 生成风险标签（下行风险/波动率/最大回撤）
+        
+        Args:
+            df: 股票数据框，需包含 symbol, date, label 列
+            
+        Returns:
+            添加了 label_risk 列的数据框
+        """
+        risk_type = self.risk_label_cfg.get("type", "downside_deviation")
+        window = self.risk_label_cfg.get("window", 20)
+        min_periods = self.risk_label_cfg.get("min_periods", 10)
+        
+        # 只在第一次调用时输出
+        if not self._risk_label_logged:
+            logger.info(f"开始生成风险标签: {risk_type}, 窗口={window}")
+            self._risk_label_logged = True
+        
+        # 确保按 symbol + date 排序
+        df = df.sort_values(["symbol", "date"])
+        
+        if risk_type == "downside_deviation":
+            # 下行风险：优先计算负收益的标准差，不足时使用整体波动率
+            def calc_downside_dev(returns):
+                negative_returns = returns[returns < 0]
+                # 降低阈值：从3改为2，提高数据利用率
+                if len(negative_returns) >= 2:
+                    return negative_returns.std()
+                # Fallback: 负样本不足时使用整体波动率
+                elif len(returns) >= 3:
+                    return returns.std()  # 使用整体波动作为风险估计
+                else:
+                    return np.nan  # 样本总数也不足
+            
+            # 降低 min_periods: 从10改为5 (或window//4)
+            min_periods_adjusted = max(5, window // 4)
+            df["label_risk"] = df.groupby("symbol")["label"].transform(
+                lambda x: x.rolling(window=window, min_periods=min_periods_adjusted).apply(calc_downside_dev, raw=False)
+            )
+        
+        elif risk_type == "volatility":
+            # 标准波动率
+            df["label_risk"] = df.groupby("symbol")["label"].transform(
+                lambda x: x.rolling(window=window, min_periods=min_periods).std()
+            )
+        
+        elif risk_type == "max_drawdown":
+            # 最大回撤（基于累计收益）
+            def calc_max_dd(returns):
+                if len(returns) < 3:
+                    return np.nan
+                cum_returns = (1 + returns).cumprod()
+                running_max = cum_returns.expanding().max()
+                drawdown = (cum_returns - running_max) / running_max
+                return -drawdown.min()  # 返回正值
+            
+            df["label_risk"] = df.groupby("symbol")["label"].transform(
+                lambda x: x.rolling(window=window, min_periods=min_periods).apply(calc_max_dd, raw=False)
+            )
+        
+        else:
+            raise ValueError(f"不支持的风险类型: {risk_type}")
+        
+        # 统计（使用 debug 级别，避免每只股票都输出）
+        valid_count = df["label_risk"].notna().sum()
+        total_count = len(df)
+        
+        # 统计风险标签的分布（使用 debug 级别）
+        if valid_count > 0:
+            risk_stats = df["label_risk"].describe()
+            logger.debug(f"风险标签: {valid_count:,}/{total_count:,} ({valid_count/total_count:.1%}), "
+                        f"mean={risk_stats['mean']:.4f}, std={risk_stats['std']:.4f}")
+        
+        return df

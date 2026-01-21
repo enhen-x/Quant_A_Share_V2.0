@@ -120,6 +120,35 @@ class SignalDiagnosis:
         plt.savefig(os.path.join(self.figure_dir, "price_distribution.png"))
         plt.close()
 
+        # 市值分析
+        if "feat_mcap_log" in merged.columns:
+            # 还原为亿元
+            mcap_series = np.exp(merged["feat_mcap_log"]) / 1e8
+            median_mcap = mcap_series.median()
+            small_cap_ratio = (mcap_series < 50).mean()
+            self.log(f"- 中位市值：{median_mcap:.2f} 亿元，小市值(<50亿)占比：{small_cap_ratio:.1%}")
+            
+            if small_cap_ratio > 0.6:
+                self.log("  - ⚠️ 注意：策略偏好小市值股票 (小市值占比 > 60%)")
+            
+            plt.figure()
+            
+            # 绘制直方图
+            sns.histplot(mcap_series.dropna(), bins=50, color="teal", kde=True)
+            plt.axvline(x=50, color='r', linestyle='--', label='50亿')
+            plt.axvline(median_mcap, color='y', linestyle='--', label=f'中位:{median_mcap:.0f}亿')
+            plt.xlabel("市值 (亿元)")
+            plt.title("选股股票市值分布")
+            
+            # 智能对数坐标：如果最大值与中位数差异过大，使用对数坐标
+            if mcap_series.max() > median_mcap * 10:
+                 plt.xscale('log')
+                 plt.xlabel("市值 (亿元) - Log Scale")
+            
+            plt.legend()
+            plt.savefig(os.path.join(self.figure_dir, "mcap_distribution.png"), dpi=120)
+            plt.close()
+
         # 波动率分析 - 修正：先在全市场数据上计算波动率，再筛选信号股票
         self.all_df_sorted = self.all_df.sort_values(by=["symbol", "date"])
         self.all_df_sorted["volatility"] = self.all_df_sorted.groupby("symbol")["close"].transform(

@@ -81,87 +81,156 @@ class ModelTrainer:
         return model
     
     # === 双头模型训练 ===
-    def train_dual_head(self, X_train, y_train_reg, y_train_cls, X_val, y_val_reg, y_val_cls, feature_names=None):
+    def train_dual_head(self, X_train, y_train_return, y_train_risk, X_val, y_val_return, y_val_risk, feature_names=None):
         """
-        训练双头模型 (回归 + 分类)
+        训练双头模型 (收益预测 + 风险预测)
         
         Returns:
-            (reg_model, cls_model): 回归模型和分类模型
+            (return_model, risk_model): 收益模型和风险模型
         """
         from src.model.lgb_model import LGBModelWrapper
+        from src.model.xgb_model import XGBModelWrapper
         
-        reg_model = None
-        cls_model = None
+        # 获取统一的模型类型
+        model_type = self.dual_head_cfg.get("model_type", "xgboost")
         
-        # 训练回归头
-        reg_cfg = self.dual_head_cfg.get("regression", {})
-        if reg_cfg.get("enable", True):
-            logger.info("=" * 40)
-            logger.info(">>> 训练回归头 (Regression Head)")
-            logger.info("=" * 40)
-            reg_model = LGBModelWrapper(task_type="regression")
-            reg_model.train(X_train, y_train_reg, X_val, y_val_reg, feature_names=feature_names)
+        # 获取收益头和风险头的参数
+        params_return = self.dual_head_cfg.get("params_return", {})
+        params_risk = self.dual_head_cfg.get("params_risk", {})
         
-        # 训练分类头
-        cls_cfg = self.dual_head_cfg.get("classification", {})
-        if cls_cfg.get("enable", True):
-            logger.info("=" * 40)
-            logger.info(">>> 训练分类头 (Classification Head)")
-            logger.info("=" * 40)
-            cls_model = LGBModelWrapper(task_type="classification")
-            cls_model.train(X_train, y_train_cls, X_val, y_val_cls, feature_names=feature_names)
+        return_model = None
+        risk_model = None
         
-        return reg_model, cls_model
+        # 训练收益预测头
+        return_cfg = self.dual_head_cfg.get("return_head", {})
+        if return_cfg.get("enable", True):
+            logger.info("=" * 40)
+            logger.info(f">>> 训练收益预测头 (Return Head | {model_type.upper()})")
+            logger.info(f"    参数来源: dual_head.params_return")
+            logger.info("=" * 40)
+            
+            if model_type == "lightgbm":
+                return_model = LGBModelWrapper(task_type="regression", custom_params=params_return)
+                return_model.train(X_train, y_train_return, X_val, y_val_return, feature_names=feature_names)
+            else:  # xgboost
+                return_model = XGBModelWrapper(task_type="regression", custom_params=params_return)
+                # XGBoost不需要feature_names参数
+                return_model.train(X_train, y_train_return, X_val, y_val_return)
+        
+        # 训练风险预测头
+        risk_cfg = self.dual_head_cfg.get("risk_head", {})
+        if risk_cfg.get("enable", True):
+            logger.info("=" * 40)
+            logger.info(f">>> 训练风险预测头 (Risk Head | {model_type.upper()})")
+            logger.info(f"    参数来源: dual_head.params_risk")
+            logger.info("=" * 40)
+            
+            # 清理风险标签中的异常值（NaN, inf）
+            valid_mask_train = np.isfinite(y_train_risk)
+            valid_mask_val = np.isfinite(y_val_risk)
+            
+            n_invalid_train = (~valid_mask_train).sum()
+            n_invalid_val = (~valid_mask_val).sum()
+            
+            if n_invalid_train > 0 or n_invalid_val > 0:
+                logger.warning(f"风险标签包含异常值: 训练集 {n_invalid_train}/{len(y_train_risk)}, "
+                             f"验证集 {n_invalid_val}/{len(y_val_risk)}")
+                logger.info(f"过滤后: 训练集 {valid_mask_train.sum()} 样本, 验证集 {valid_mask_val.sum()} 样本")
+                
+                # 过滤数据
+                X_train_clean = X_train[valid_mask_train]
+                y_train_risk_clean = y_train_risk[valid_mask_train]
+                X_val_clean = X_val[valid_mask_val]
+                y_val_risk_clean = y_val_risk[valid_mask_val]
+            else:
+                X_train_clean = X_train
+                y_train_risk_clean = y_train_risk
+                X_val_clean = X_val
+                y_val_risk_clean = y_val_risk
+            
+            if model_type == "lightgbm":
+                risk_model = LGBModelWrapper(task_type="regression", custom_params=params_risk)
+                # 获取风险头的early stopping
+                risk_early_stop = params_risk.get("early_stopping_rounds", None)
+                risk_model.train(X_train_clean, y_train_risk_clean, X_val_clean, y_val_risk_clean, 
+                               feature_names=feature_names, early_stopping_rounds=risk_early_stop)
+            else:  # xgboost
+                risk_model = XGBModelWrapper(task_type="regression", custom_params=params_risk)
+                # XGBoost不需要feature_names参数
+                risk_model.train(X_train_clean, y_train_risk_clean, X_val_clean, y_val_risk_clean)
+        
+        return return_model, risk_model
     
-    def fuse_predictions(self, pred_reg: np.ndarray, pred_cls: np.ndarray) -> np.ndarray:
+    def fuse_predictions(self, pred_return: np.ndarray, pred_risk: np.ndarray) -> np.ndarray:
         """
-        融合回归和分类预测
+        融合收益和风险预测
         
         Args:
-            pred_reg: 回归模型预测值
-            pred_cls: 分类模型预测概率
+            pred_return: 收益预测值
+            pred_risk: 风险预测值
             
         Returns:
-            融合后的预测分数
+            融合后的预测分数（风险调整收益）
         """
         fusion_cfg = self.dual_head_cfg.get("fusion", {})
-        method = fusion_cfg.get("method", "weighted_average")
+        method = fusion_cfg.get("method", "rank_ratio")
         normalize = fusion_cfg.get("normalize", True)
         
-        reg_weight = self.dual_head_cfg.get("regression", {}).get("weight", 0.6)
-        cls_weight = self.dual_head_cfg.get("classification", {}).get("weight", 0.4)
+        return_weight = self.dual_head_cfg.get("return_head", {}).get("weight", 0.6)
+        risk_weight = self.dual_head_cfg.get("risk_head", {}).get("weight", 0.4)
         
-        # 归一化
-        if normalize:
-            def min_max_normalize(arr):
-                arr = np.array(arr)
-                min_val, max_val = arr.min(), arr.max()
-                if max_val - min_val > 1e-8:
-                    return (arr - min_val) / (max_val - min_val)
-                return np.zeros_like(arr)
-            
-            if pred_reg is not None:
-                pred_reg = min_max_normalize(pred_reg)
-            if pred_cls is not None:
-                pred_cls = min_max_normalize(pred_cls)
+        # 归一化辅助函数
+        def min_max_normalize(arr):
+            arr = np.array(arr)
+            min_val, max_val = arr.min(), arr.max()
+            if max_val - min_val > 1e-8:
+                return (arr - min_val) / (max_val - min_val)
+            return np.zeros_like(arr)
         
-        # 融合
-        if method == "weighted_average":
-            if pred_reg is not None and pred_cls is not None:
-                fused = reg_weight * pred_reg + cls_weight * pred_cls
-            elif pred_reg is not None:
-                fused = pred_reg
-            else:
-                fused = pred_cls
-        elif method == "multiplicative":
-            if pred_reg is not None and pred_cls is not None:
-                fused = pred_reg * pred_cls
-            elif pred_reg is not None:
-                fused = pred_reg
-            else:
-                fused = pred_cls
+        # 处理空值情况
+        if pred_return is None or pred_risk is None:
+            logger.warning("收益或风险预测为空，返回可用预测")
+            return pred_return if pred_return is not None else pred_risk
+        
+        # 方案1: Sharpe-like 比值
+        if method == "sharpe_like":
+            epsilon = 1e-6
+            fused = pred_return / (pred_risk + epsilon)
+            logger.debug(f"使用 Sharpe-like 融合: return / (risk + {epsilon})")
+        
+        # 方案2: 分位数加权（推荐，对异常值不敏感）
+        elif method == "rank_ratio":
+            from scipy.stats import rankdata
+            rank_return = rankdata(pred_return)
+            rank_risk = rankdata(pred_risk)
+            # 风险越低越好，所以用倒数
+            fused = rank_return / (rank_risk + 1)
+            logger.debug("使用分位数加权融合: rank(return) / rank(risk)")
+        
+        # 方案3: 效用函数
+        elif method == "utility":
+            risk_aversion = fusion_cfg.get("risk_aversion", 2.0)
+            if normalize:
+                pred_return = min_max_normalize(pred_return)
+                pred_risk = min_max_normalize(pred_risk)
+            fused = pred_return - risk_aversion * (pred_risk ** 2)
+            logger.debug(f"使用效用函数融合: return - {risk_aversion} * risk^2")
+        
+        # 方案4: 加权平均（兼容旧版，不推荐）
+        elif method == "weighted_average":
+            if normalize:
+                pred_return = min_max_normalize(pred_return)
+                pred_risk = min_max_normalize(pred_risk)
+            # 风险取反（风险越低分数越高）
+            fused = return_weight * pred_return - risk_weight * pred_risk
+            logger.debug(f"使用加权平均融合: {return_weight}*return - {risk_weight}*risk")
+        
         else:
-            fused = pred_reg if pred_reg is not None else pred_cls
+            logger.warning(f"未知融合方法: {method}，使用默认 rank_ratio")
+            from scipy.stats import rankdata
+            rank_return = rankdata(pred_return)
+            rank_risk = rankdata(pred_risk)
+            fused = rank_return / (rank_risk + 1)
         
         return fused
 
@@ -182,54 +251,61 @@ class ModelTrainer:
         
         if self.dual_head_enabled:
             # ==========================================
-            # 双头模型训练
+            # 双头模型训练 (收益+风险预测)
             # ==========================================
             logger.info("=" * 50)
-            logger.info(">>> 双头模型训练模式 (Dual-Head)")
+            logger.info(">>> 双头模型训练模式 (Return + Risk Prediction)")
             logger.info("=" * 50)
             
-            y_train_reg = df.loc[train_mask, label]
-            y_val_reg = df.loc[val_mask, label]
+            # 收益标签（原有）
+            y_train_return = df.loc[train_mask, label]
+            y_val_return = df.loc[val_mask, label]
             
-            # 检查分类标签
-            label_cls = "label_cls"
-            if label_cls not in df.columns:
-                logger.error(f"未找到分类标签列 '{label_cls}'，请确保启用双头模型后重新运行 pipeline")
-                raise ValueError(f"缺少分类标签列 '{label_cls}'")
+            # 风险标签（新增）
+            label_risk = "label_risk"
+            if label_risk not in df.columns:
+                logger.error(f"未找到风险标签列 '{label_risk}'，请确保在 pipeline 中生成风险标签")
+                raise ValueError(f"缺少风险标签列 '{label_risk}'")
             
-            y_train_cls = df.loc[train_mask, label_cls]
-            y_val_cls = df.loc[val_mask, label_cls]
+            y_train_risk = df.loc[train_mask, label_risk]
+            y_val_risk = df.loc[val_mask, label_risk]
             
             # 训练双头模型
-            reg_model, cls_model = self.train_dual_head(
-                X_train, y_train_reg, y_train_cls,
-                X_val, y_val_reg, y_val_cls,
+            return_model, risk_model = self.train_dual_head(
+                X_train, y_train_return, y_train_risk,
+                X_val, y_val_return, y_val_risk,
                 feature_names=features
             )
             
-            # 保存模型
-            if reg_model is not None:
-                reg_model.save(os.path.join(self.model_dir, "model_reg.joblib"))
-            if cls_model is not None:
-                cls_model.save(os.path.join(self.model_dir, "model_cls.joblib"))
+            # 保存模型（XGBoost使用.ubj格式，LightGBM使用.joblib）
+            if return_model is not None:
+                if model_type == "xgboost":
+                    return_model.save(os.path.join(self.model_dir, "model_return.ubj"))
+                else:
+                    return_model.save(os.path.join(self.model_dir, "model_return.joblib"))
+            if risk_model is not None:
+                if model_type == "xgboost":
+                    risk_model.save(os.path.join(self.model_dir, "model_risk.ubj"))
+                else:
+                    risk_model.save(os.path.join(self.model_dir, "model_risk.joblib"))
             
             # 生成预测
-            pred_reg = reg_model.predict(df[features]) if reg_model else None
-            pred_cls = cls_model.predict(df[features]) if cls_model else None
+            pred_return = return_model.predict(df[features]) if return_model else None
+            pred_risk = risk_model.predict(df[features]) if risk_model else None
             
             # 融合预测
-            df["pred_reg"] = pred_reg
-            df["pred_cls"] = pred_cls
-            df["pred_score"] = self.fuse_predictions(pred_reg, pred_cls)
+            df["pred_return"] = pred_return
+            df["pred_risk"] = pred_risk
+            df["pred_score"] = self.fuse_predictions(pred_return, pred_risk)
             
             # 保存结果
-            out_cols = ["date", "symbol", "close", label, label_cls, "pred_reg", "pred_cls", "pred_score"]
+            out_cols = ["date", "symbol", "close", label, label_risk, "pred_return", "pred_risk", "pred_score"]
             out_cols = [c for c in out_cols if c in df.columns]
             df[out_cols].to_parquet(os.path.join(self.model_dir, "predictions.parquet"), index=False)
             
             logger.info(f"双头模型训练完成。")
-            logger.info(f"回归权重: {self.dual_head_cfg.get('regression', {}).get('weight', 0.6)}")
-            logger.info(f"分类权重: {self.dual_head_cfg.get('classification', {}).get('weight', 0.4)}")
+            logger.info(f"融合方法: {self.dual_head_cfg.get('fusion', {}).get('method', 'rank_ratio')}")
+
             
         else:
             # ==========================================

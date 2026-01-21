@@ -24,66 +24,79 @@ logger = get_logger()
 
 def fuse_predictions_dynamic(pred_df: pd.DataFrame) -> pd.DataFrame:
     """
-    动态融合预测分数 - 根据当前配置文件中的权重重新计算 pred_score
+    动态融合预测分数 - 支持新旧双头模型架构
     
-    如果 pred_reg 和 pred_cls 列存在，则使用配置权重融合；
-    否则直接使用已有的 pred_score。
+    新架构: pred_return + pred_risk
+    旧架构: pred_reg + pred_cls (向后兼容)
     """
     dual_head_cfg = GLOBAL_CONFIG.get("model", {}).get("dual_head", {})
     
+    # 检测列名
+    has_return = "pred_return" in pred_df.columns
+    has_risk = "pred_risk" in pred_df.columns
     has_reg = "pred_reg" in pred_df.columns
     has_cls = "pred_cls" in pred_df.columns
     
-    if not has_reg and not has_cls:
-        # 单模型训练，直接使用原有 pred_score
+    is_dual_head = (has_return and has_risk) or (has_reg and has_cls)
+    
+    if not is_dual_head:
         logger.info("检测到单模型预测，使用原有 pred_score")
         return pred_df
     
-    # 读取配置权重
-    reg_weight = dual_head_cfg.get("regression", {}).get("weight", 0.6)
-    cls_weight = dual_head_cfg.get("classification", {}).get("weight", 0.4)
-    normalize = dual_head_cfg.get("fusion", {}).get("normalize", True)
-    method = dual_head_cfg.get("fusion", {}).get("method", "weighted_average")
+    # 读取融合配置
+    fusion_cfg = dual_head_cfg.get("fusion", {})
+    method = fusion_cfg.get("method", "rank_ratio")
+    risk_aversion = fusion_cfg.get("risk_aversion", 2.0)
     
-    logger.info(f"动态融合: 回归权重={reg_weight}, 分类权重={cls_weight}, 融合方法={method}")
-    
-    # 归一化函数
-    def min_max_normalize(arr):
-        arr = np.array(arr)
-        min_val, max_val = np.nanmin(arr), np.nanmax(arr)
-        if max_val - min_val > 1e-8:
-            return (arr - min_val) / (max_val - min_val)
-        return np.zeros_like(arr)
-    
-    pred_reg = pred_df["pred_reg"].values if has_reg else None
-    pred_cls = pred_df["pred_cls"].values if has_cls else None
-    
-    # 归一化
-    if normalize:
-        if pred_reg is not None:
-            pred_reg = min_max_normalize(pred_reg)
-        if pred_cls is not None:
-            pred_cls = min_max_normalize(pred_cls)
-    
-    # 融合
-    if method == "weighted_average":
-        if pred_reg is not None and pred_cls is not None:
-            fused = reg_weight * pred_reg + cls_weight * pred_cls
-        elif pred_reg is not None:
-            fused = pred_reg
-        else:
-            fused = pred_cls
-    elif method == "multiplicative":
-        if pred_reg is not None and pred_cls is not None:
-            fused = pred_reg * pred_cls
-        elif pred_reg is not None:
-            fused = pred_reg
-        else:
-            fused = pred_cls
+    # 使用新架构或旧架构
+    if has_return and has_risk:
+        logger.info(f"检测到双头模型 (收益+风险预测)，融合方法={method}")
+        pred_return = pred_df["pred_return"].values
+        pred_risk = pred_df["pred_risk"].values
     else:
-        fused = pred_reg if pred_reg is not None else pred_cls
+        logger.info(f"检测到旧版双头模型 (回归+分类)，融合方法={method}")
+        pred_return = pred_df["pred_reg"].values
+        pred_risk = pred_df["pred_cls"].values
+    
+    # 融合逻辑
+    from scipy.stats import rankdata
+    
+    if method == "rank_ratio":
+        # 排名比率 - 使用百分位避免数值过大
+        n = len(pred_return)
+        rank_return = rankdata(pred_return, nan_policy='omit') / n
+        rank_risk = rankdata(pred_risk, nan_policy='omit') / n
+        epsilon = 0.01
+        fused = rank_return / (rank_risk + epsilon)
+        # 归一化到 [0, 1]
+        fused = (fused - np.nanmin(fused)) / (np.nanmax(fused) - np.nanmin(fused) + 1e-8)
+        
+    elif method == "sharpe_like":
+        # Sharpe-like比率
+        epsilon = np.nanstd(pred_risk) * 0.1 if np.nanstd(pred_risk) > 0 else 0.01
+        fused = pred_return / (pred_risk + epsilon)
+        
+    elif method == "utility":
+        # 效用函数
+        fused = pred_return - risk_aversion * (pred_risk ** 2)
+        
+    elif method == "weighted_average":
+        # 加权平均（兼容旧版）
+        return_weight = dual_head_cfg.get("return_head", {}).get("weight", 0.6)
+        risk_weight = dual_head_cfg.get("risk_head", {}).get("weight", 0.4)
+        # 归一化
+        ret_norm = (pred_return - np.nanmin(pred_return)) / (np.nanmax(pred_return) - np.nanmin(pred_return) + 1e-8)
+        risk_norm = (pred_risk - np.nanmin(pred_risk)) / (np.nanmax(pred_risk) - np.nanmin(pred_risk) + 1e-8)
+        fused = return_weight * ret_norm - risk_weight * risk_norm
+        
+    else:
+        logger.warning(f"未知融合方法: {method}，使用 rank_ratio")
+        rank_return = rankdata(pred_return, nan_policy='omit')
+        rank_risk = rankdata(pred_risk, nan_policy='omit')
+        fused = rank_return / (rank_risk + 1.0)
     
     pred_df["pred_score"] = fused
+    logger.info(f"融合完成，pred_score 范围: [{np.nanmin(fused):.4f}, {np.nanmax(fused):.4f}]")
     return pred_df
 
 

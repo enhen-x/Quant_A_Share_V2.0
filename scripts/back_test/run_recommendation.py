@@ -57,27 +57,38 @@ def get_latest_model_path():
     # 4. 检测模型类型
     model_info = {}
     
-    # 情况 A: 双头模型 (LightGBM joblib 格式)
-    # 检查是否存在 model_reg*.joblib 和 model_cls*.joblib
-    reg_models = glob.glob(os.path.join(version_dir, "model_reg*.joblib"))
-    cls_models = glob.glob(os.path.join(version_dir, "model_cls*.joblib"))
+    # 情况 A: 双头模型
+    # 支持两种格式: .joblib (LightGBM) 和 .ubj (XGBoost)
+    return_models = (glob.glob(os.path.join(version_dir, "model_return*.joblib")) + 
+                    glob.glob(os.path.join(version_dir, "model_return*.ubj")))
+    risk_models = (glob.glob(os.path.join(version_dir, "model_risk*.joblib")) +
+                  glob.glob(os.path.join(version_dir, "model_risk*.ubj")))
     
-    if reg_models and cls_models:
+    # 向后兼容：如果没有找到新版，寻找旧版
+    if not return_models:
+        return_models = (glob.glob(os.path.join(version_dir, "model_reg*.joblib")) +
+                        glob.glob(os.path.join(version_dir, "model_reg*.ubj")))
+    if not risk_models:
+        risk_models = (glob.glob(os.path.join(version_dir, "model_cls*.joblib")) +
+                      glob.glob(os.path.join(version_dir, "model_cls*.ubj")))
+    
+    if return_models and risk_models:
         # 双头模型，找年份最大的
         def extract_year(path):
             fname = os.path.basename(path)
-            match = re.search(r"model_(?:reg|cls)_(\d+)\.joblib", fname)
-            return int(match.group(1)) if match else 0
+            # 匹配 model_(return|risk|reg|cls)_YYYY.(joblib|ubj) 或 model_(return|risk|reg|cls).(joblib|ubj)
+            match = re.search(r"model_(?:return|risk|reg|cls)(?:_(\d+))?\.(joblib|ubj)", fname)
+            return int(match.group(1)) if (match and match.group(1)) else 0
         
-        best_reg = max(reg_models, key=extract_year)
-        best_cls = max(cls_models, key=extract_year)
-        best_year = extract_year(best_reg)
+        best_return = max(return_models, key=extract_year)
+        best_risk = max(risk_models, key=extract_year)
+        best_year = extract_year(best_return)
         
-        logger.info(f"检测到双头模型，已自动选择最新年份: {best_year}")
+        logger.info(f"检测到双头模型 (收益+风险预测)，已自动选择最新年份: {best_year if best_year > 0 else '无年份后缀'}")
         model_info = {
             "type": "dual_head",
-            "reg_path": best_reg,
-            "cls_path": best_cls,
+            "return_path": best_return,
+            "risk_path": best_risk,
             "format": "lgb"
         }
         return latest_version, model_info
@@ -127,42 +138,72 @@ def load_model(model_info):
             return model, None
     else:  # dual_head
         from src.model.lgb_model import LGBModelWrapper
-        reg_model = LGBModelWrapper(task_type="regression")
-        reg_model.load(model_info["reg_path"])
-        cls_model = LGBModelWrapper(task_type="classification")
-        cls_model.load(model_info["cls_path"])
-        return reg_model, cls_model
+        return_model = LGBModelWrapper(task_type="regression")
+        risk_model = LGBModelWrapper(task_type="regression")  # 风险也是回归任务
+        
+        # 兼容新旧路径
+        return_path = model_info.get("return_path") or model_info.get("reg_path")
+        risk_path = model_info.get("risk_path") or model_info.get("cls_path")
+        
+        return_model.load(return_path)
+        risk_model.load(risk_path)
+        return return_model, risk_model
 
 def fuse_predictions(pred_df, dual_head_cfg):
     """
-    融合双头模型预测结果
+    融合双头模型预测结果 (收益+风险)
     
     修复：改为按天归一化，避免跨日期的预测值排序失真
     """
     import numpy as np
+    from scipy.stats import rankdata
     
     fusion_cfg = dual_head_cfg.get("fusion", {})
+    method = fusion_cfg.get("method", "rank_ratio")
     normalize = fusion_cfg.get("normalize", True)
-    reg_weight = dual_head_cfg.get("regression", {}).get("weight", 0.6)
-    cls_weight = dual_head_cfg.get("classification", {}).get("weight", 0.4)
     
-    pred_reg = pred_df["pred_reg"].values
-    pred_cls = pred_df["pred_cls"].values
+    return_weight = dual_head_cfg.get("return_head", {}).get("weight", 0.6)
+    risk_weight = dual_head_cfg.get("risk_head", {}).get("weight", 0.4)
     
-    if normalize:
-        # [修复] 按天归一化，避免跨日期排序失真
-        def daily_min_max_normalize(series):
-            """按天进行 Min-Max 归一化"""
-            return pred_df.groupby("date")[series.name].transform(
+    pred_return = pred_df["pred_return"].values
+    pred_risk = pred_df["pred_risk"].values
+    
+    # 方案1: Sharpe-like 比值
+    if method == "sharpe_like":
+        epsilon = 1e-6
+        return pred_return / (pred_risk + epsilon)
+    
+    # 方案2: 分位数加权（推荐，对异常值不敏感）
+    elif method == "rank_ratio":
+        # 按天进行分位数排名
+        pred_df["rank_return"] = pred_df.groupby("date")["pred_return"].rank()
+        pred_df["rank_risk"] = pred_df.groupby("date")["pred_risk"].rank()
+        return pred_df["rank_return"].values / (pred_df["rank_risk"].values + 1)
+    
+    # 方案3: 效用函数
+    elif method == "utility":
+        risk_aversion = fusion_cfg.get("risk_aversion", 2.0)
+        if normalize:
+            pred_df["pred_return_norm"] = pred_df.groupby("date")["pred_return"].transform(
                 lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9)
             )
-        
-        pred_df["pred_reg_norm"] = daily_min_max_normalize(pred_df["pred_reg"])
-        pred_df["pred_cls_norm"] = daily_min_max_normalize(pred_df["pred_cls"])
-        
-        return reg_weight * pred_df["pred_reg_norm"].values + cls_weight * pred_df["pred_cls_norm"].values
+            pred_df["pred_risk_norm"] = pred_df.groupby("date")["pred_risk"].transform(
+                lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9)
+            )
+            return pred_df["pred_return_norm"].values - risk_aversion * (pred_df["pred_risk_norm"].values ** 2)
+        return pred_return - risk_aversion * (pred_risk ** 2)
     
-    return reg_weight * pred_reg + cls_weight * pred_cls
+    # 方案4: 加权平均（兼容旧版）
+    else:
+        if normalize:
+            pred_df["pred_return_norm"] = pred_df.groupby("date")["pred_return"].transform(
+                lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9)
+            )
+            pred_df["pred_risk_norm"] = pred_df.groupby("date")["pred_risk"].transform(
+                lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9)
+            )
+            return return_weight * pred_df["pred_return_norm"].values - risk_weight * pred_df["pred_risk_norm"].values
+        return return_weight * pred_return - risk_weight * pred_risk
 
 def load_latest_data():
     """加载特征数据，并提取出【最近 N 个交易日】的数据，用于预测和平滑。"""
@@ -212,7 +253,7 @@ def main():
     
     logger.info(f"模型类型: {model_info['type']}, 格式: {model_info['format']}")
     
-    reg_model, cls_model = load_model(model_info)
+    return_model, risk_model = load_model(model_info)
     is_dual_head = model_info["type"] == "dual_head"
     
     # 2. 加载最新行情数据（最近 N 天）
@@ -227,8 +268,8 @@ def main():
     # 3.1 特征对齐
     final_features = feat_cols
     # 使用模型记录的特征名
-    if reg_model and hasattr(reg_model, 'feature_names') and reg_model.feature_names:
-        model_features = reg_model.feature_names
+    if return_model and hasattr(return_model, 'feature_names') and return_model.feature_names:
+        model_features = return_model.feature_names
         logger.info(f"使用模型内置特征列表: {len(model_features)} 个")
         
         missing = [f for f in model_features if f not in df_slice.columns]
@@ -245,18 +286,19 @@ def main():
         X_pred = df_slice[final_features]
         
         if is_dual_head:
-            pred_reg = reg_model.predict(X_pred)
-            pred_cls = cls_model.predict(X_pred)
+            pred_return = return_model.predict(X_pred)
+            pred_risk = risk_model.predict(X_pred)
             
             # 构造临时 DataFrame 用于按天归一化
             temp_df = df_slice[["date", "symbol"]].copy()
-            temp_df["pred_reg"] = pred_reg
-            temp_df["pred_cls"] = pred_cls
+            temp_df["pred_return"] = pred_return
+            temp_df["pred_risk"] = pred_risk
             
             pred_scores = fuse_predictions(temp_df, dual_head_cfg)
-            logger.info(f"双头融合预测完成 (权重: reg={dual_head_cfg.get('regression', {}).get('weight', 0.6)}, cls={dual_head_cfg.get('classification', {}).get('weight', 0.4)})")
+            logger.info(f"双头融合预测完成 (方法: {dual_head_cfg.get('fusion', {}).get('method', 'rank_ratio')})")
         else:
-            pred_scores = reg_model.predict(X_pred)
+            pred_scores = return_model.predict(X_pred)
+
             
     except Exception as e:
         logger.error(f"预测失败: {e}")
@@ -304,7 +346,8 @@ def main():
     print(f"🌟 {latest_date.strftime('%Y-%m-%d')} 每日精选推荐 (Top {len(recommend_df_latest)}) 🌟")
     
     if is_dual_head:
-        print(f"📊 使用双头模型 (回归+分类融合)")
+        print(f"📊 使用双头模型 (收益+风险预测融合)")
+
     
     print("-" * 70)
     print(f"🛡️  风控系统建议总仓位: {current_pos_ratio * 100:.0f}%")

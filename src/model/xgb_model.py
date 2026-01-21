@@ -6,9 +6,31 @@ from typing import Optional
 logger = get_logger()
 
 class XGBModelWrapper:
-    def __init__(self):
+    def __init__(self, task_type: str = "regression", params_key: str = "params", custom_params: dict = None):
+        """
+        初始化XGBoost模型包装器
+        
+        Args:
+            task_type: 任务类型（暂未使用，保留用于统一接口）
+            params_key: 参数配置key，默认 "params"，可用 "xgb_params" 或 "xgb_params_risk"
+            custom_params: 自定义参数字典，如果提供则直接使用，优先级最高
+        """
         self.conf = GLOBAL_CONFIG["model"]
-        self.params = self.conf["params"]
+        
+        # 参数优先级: custom_params > params_key > "params"
+        if custom_params is not None:
+            self.params = custom_params.copy()
+        else:
+            self.params = self.conf.get(params_key, self.conf.get("params", {})).copy()
+        
+        
+        # 过滤掉LightGBM专用参数（避免警告）
+        # 注意: device 参数保留（XGBoost用于GPU: cuda, LightGBM用于GPU: gpu）
+        lgb_only_params = ['num_leaves', 'min_child_samples', 'verbose']
+        for param in lgb_only_params:
+            if param in self.params:
+                self.params.pop(param)
+        
         self.model = None
         self.evals_result = {}  # 存储训练历史
 
@@ -138,6 +160,9 @@ class XGBModelWrapper:
         return self.model.predict(dtest)
     
     def save(self, path):
+        """保存模型（默认使用UBJSON格式）"""
+        if self.model is None:
+            raise ValueError("模型尚未训练")
         self.model.save_model(path)
 
     def load(self, path):

@@ -176,7 +176,10 @@ class XueqiuBroker:
                 })
             return result
         except Exception as e:
-            logger.error(f"获取持仓失败: {e}")
+            if "get portfolio info error" in str(e):
+                logger.error(f"❌ 获取持仓失败: 无法获取组合信息。可能 Cookies 失效或组合代码错误。")
+            else:
+                logger.error(f"获取持仓失败: {e}")
             return []
     
     
@@ -210,9 +213,13 @@ class XueqiuBroker:
             return True
             
         except Exception as e:
-            logger.error(f"调仓失败: {e}")
-            import traceback
-            traceback.print_exc()
+            if "stocks" in str(e) and isinstance(e, KeyError):
+                logger.error("❌ 调仓失败: 无法获取股票信息。通常是因为雪球 Cookies 失效。")
+                logger.error("👉 请更新配置文件中的 Config Cookies。")
+            else:
+                logger.error(f"调仓失败: {e}")
+                import traceback
+                traceback.print_exc()
             return False
     
     def buy(self, symbol, weight):

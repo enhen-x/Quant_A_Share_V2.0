@@ -18,16 +18,24 @@ logger = get_logger()
 class LGBModelWrapper:
     """LightGBM 模型包装器，支持回归和分类任务"""
     
-    def __init__(self, task_type: str = "regression"):
+    def __init__(self, task_type: str = "regression", params_key: str = "lgb_params", custom_params: dict = None):
         """
         初始化模型包装器
         
         Args:
             task_type: "regression" (回归) 或 "classification" (分类)
+            params_key: 参数配置key，默认 "lgb_params"，风险头可用 "lgb_params_risk"
+            custom_params: 自定义参数字典，如果提供则直接使用，优先级最高
         """
         self.task_type = task_type
         self.conf = GLOBAL_CONFIG.get("model", {})
-        self.lgb_params = self.conf.get("lgb_params", {})
+        
+        # 参数优先级: custom_params > params_key > lgb_params
+        if custom_params is not None:
+            self.lgb_params = custom_params
+        else:
+            self.lgb_params = self.conf.get(params_key, self.conf.get("lgb_params", {}))
+        
         self.model = None
         self.feature_names = None
         self.evals_result = {}
