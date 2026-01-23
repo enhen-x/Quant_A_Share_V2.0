@@ -124,26 +124,44 @@ def load_model(model_info):
     """
     根据 model_info 加载模型
     返回: model 或 (reg_model, cls_model)
+    
+    修复：直接检查文件扩展名来判断模型格式（.ubj=XGBoost, .joblib=LightGBM）
     """
-    if model_info["type"] == "single":
-        if model_info["format"] == "xgb":
+    # 兼容 'type' 和 'model_type' 两种键名
+    model_type = model_info.get('model_type') or model_info.get('type')
+    logger.info(f"模型类型: {model_type}, 配置格式: {model_info['format']}")
+    
+    if model_type == "single":
+        model_path = model_info["path"]
+        # 检测实际文件格式（优先使用文件扩展名）
+        if model_path.endswith('.ubj') or model_path.endswith('.json'):
+            logger.info("检测到XGBoost模型格式")
             from src.model.xgb_model import XGBModelWrapper
             model = XGBModelWrapper()
-            model.load(model_info["path"])
+            model.load(model_path)
             return model, None
-        else:  # lgb
+        else:  # .joblib
+            logger.info("检测到LightGBM模型格式")
             from src.model.lgb_model import LGBModelWrapper
             model = LGBModelWrapper(task_type="regression")
-            model.load(model_info["path"])
+            model.load(model_path)
             return model, None
     else:  # dual_head
-        from src.model.lgb_model import LGBModelWrapper
-        return_model = LGBModelWrapper(task_type="regression")
-        risk_model = LGBModelWrapper(task_type="regression")  # 风险也是回归任务
-        
         # 兼容新旧路径
         return_path = model_info.get("return_path") or model_info.get("reg_path")
         risk_path = model_info.get("risk_path") or model_info.get("cls_path")
+        
+        # 检测实际文件格式
+        if return_path.endswith('.ubj'):
+            logger.info("检测到XGBoost双头模型（.ubj格式）")
+            from src.model.xgb_model import XGBModelWrapper
+            return_model = XGBModelWrapper()
+            risk_model = XGBModelWrapper()
+        else:  # .joblib
+            logger.info("检测到LightGBM双头模型（.joblib格式）")
+            from src.model.lgb_model import LGBModelWrapper
+            return_model = LGBModelWrapper(task_type="regression")
+            risk_model = LGBModelWrapper(task_type="regression")
         
         return_model.load(return_path)
         risk_model.load(risk_path)

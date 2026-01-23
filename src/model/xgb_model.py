@@ -1,3 +1,4 @@
+import os
 import xgboost as xgb
 from src.utils.config import GLOBAL_CONFIG
 from src.utils.logger import get_logger
@@ -33,6 +34,7 @@ class XGBModelWrapper:
         
         self.model = None
         self.evals_result = {}  # 存储训练历史
+        self.feature_names = None  # 存储特征名称
 
     def train(self, X_train, y_train, X_val=None, y_val=None, 
               monitor=None, experiment_name: str = None):
@@ -48,6 +50,10 @@ class XGBModelWrapper:
             experiment_name: 实验名称（可选）
         """
         logger.info(f"初始化 XGBoost (Params: {self.params})")
+        
+        # 记录特征名称（用于验证预测数据）
+        if hasattr(X_train, 'columns'):
+            self.feature_names = list(X_train.columns)
         
         # 转换为 DMatrix
         dtrain = xgb.DMatrix(X_train, label=y_train)
@@ -156,6 +162,17 @@ class XGBModelWrapper:
     def predict(self, X):
         if self.model is None:
             raise ValueError("模型尚未训练")
+        
+        # 如果有记录的特征名称，确保输入数据列顺序一致
+        if self.feature_names and hasattr(X, 'columns'):
+            # 检查是否所有特征都存在
+            missing = [f for f in self.feature_names if f not in X.columns]
+            if missing:
+                raise ValueError(f"输入数据缺少模型所需的特征: {missing}")
+            
+            # 按照训练时的顺序重新排列特征列
+            X = X[self.feature_names]
+        
         dtest = xgb.DMatrix(X)
         return self.model.predict(dtest)
     
@@ -164,7 +181,31 @@ class XGBModelWrapper:
         if self.model is None:
             raise ValueError("模型尚未训练")
         self.model.save_model(path)
+        
+        # 保存特征名称到同名的 .features 文件
+        if self.feature_names:
+            import json
+            feature_file = path.replace('.ubj', '.features').replace('.json', '.features')
+            with open(feature_file, 'w') as f:
+                json.dump({'feature_names': self.feature_names}, f, indent=2)
 
     def load(self, path):
         self.model = xgb.Booster()
         self.model.load_model(path)
+        
+        # 尝试从 .features 文件加载特征名称
+        feature_file = path.replace('.ubj', '.features').replace('.json', '.features')
+        if os.path.exists(feature_file):
+            import json
+            with open(feature_file, 'r') as f:
+                data = json.load(f)
+                self.feature_names = data.get('feature_names', [])
+            logger.info(f"从 {os.path.basename(feature_file)} 加载了 {len(self.feature_names)} 个特征名称")
+        else:
+            # 尝试从模型本身提取（XGBoost 模型可能保存了特征名）
+            try:
+                self.feature_names = self.model.feature_names
+                logger.info(f"从模型本身提取了 {len(self.feature_names)} 个特征名称")
+            except:
+                logger.warning("无法加载特征名称，预测时需要确保特征顺序一致")
+                self.feature_names = None
