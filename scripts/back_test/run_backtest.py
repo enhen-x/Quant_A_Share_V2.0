@@ -21,6 +21,9 @@ from src.backtest.backtester import VectorBacktester
 
 logger = get_logger()
 
+# 指定回测使用的模型版本（None 表示自动选择最新）
+MODEL_VERSION = "WF_20260128_141530" #### 可修改为指定版本号，或 None 自动选择最新版本 ####
+
 
 def fuse_predictions_dynamic(pred_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -118,7 +121,7 @@ def get_latest_model_version():
 
 def main():
     # 1. 确定模型版本
-    version = get_latest_model_version()
+    version = MODEL_VERSION or get_latest_model_version()
     if not version:
         logger.error("未找到任何模型版本，请先运行 train_model.py")
         return

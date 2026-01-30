@@ -214,6 +214,7 @@ class VectorBacktester:
         idx_code = self.config.get("preprocessing", {}).get("labels", {}).get("index_code", "000300.SH")
         idx_file = os.path.join(self.paths["data_raw"], f"index_{idx_code.replace('.', '')}.parquet")
         benchmark_curve = None
+        regime_stats = None
         if os.path.exists(idx_file):
             idx_df = read_parquet(idx_file)
             idx_df["date"] = pd.to_datetime(idx_df["date"])
@@ -228,11 +229,24 @@ class VectorBacktester:
         
         if benchmark_curve is not None:
             self._plot_daily_comparison(daily_ret_net, benchmark_curve, output_dir)
+            regime_stats = self._calc_regime_stats(daily_ret_net, benchmark_curve)
+            if regime_stats:
+                logger.info(
+                    "Regime win rate | bull: %.2f%% (%d/%d) | bear: %.2f%% (%d/%d)",
+                    regime_stats["bull_win_rate"] * 100,
+                    regime_stats["bull_win_days"],
+                    regime_stats["bull_days"],
+                    regime_stats["bear_win_rate"] * 100,
+                    regime_stats["bear_win_days"],
+                    regime_stats["bear_days"],
+                )
         
         logger.info(f"年化收益率: {metrics['annual_return']:.2%}")
         logger.info(f"夏普比率: {metrics['sharpe']:.2f}")
         logger.info(f"最大回撤: {metrics['max_drawdown']:.2%}")
         
+        if benchmark_curve is not None and regime_stats:
+            metrics["regime_stats"] = regime_stats
         metrics["equity_curve"] = equity_curve
         return metrics
 
@@ -275,6 +289,7 @@ class VectorBacktester:
             equity.plot(ax=ax1, label="Strategy", color="red", linewidth=2)
             if benchmark is not None:
                 benchmark.plot(ax=ax1, label="Benchmark", color="gray", linestyle="--", alpha=0.7)
+                self._add_market_regime_shading(ax1, benchmark)
             ax1.set_title(f"Backtest {title_suffix}\nAnn Ret: {metrics['annual_return']:.1%} | Sharpe: {metrics['sharpe']:.2f} | MaxDD: {metrics['max_drawdown']:.1%}")
             ax1.legend(loc="upper left")
             ax1.grid(True, linestyle="--", alpha=0.5)
@@ -283,6 +298,7 @@ class VectorBacktester:
             equity.plot(ax=ax2, label="Strategy", color="red", linewidth=2)
             if benchmark is not None:
                 benchmark.plot(ax=ax2, label="Benchmark", color="gray", linestyle="--", alpha=0.7)
+                self._add_market_regime_shading(ax2, benchmark)
             ax2.set_yscale('log')
             ax2.set_title("Backtest (Log Scale)")
             ax2.legend(loc="upper left")
@@ -293,6 +309,75 @@ class VectorBacktester:
             plt.close()
         finally:
             sys.stderr = old_stderr
+
+    def _add_market_regime_shading(self, ax, benchmark_curve: pd.Series):
+        """Add bull/bear background based on benchmark 200D MA."""
+        if benchmark_curve is None or benchmark_curve.empty:
+            return
+        bench = benchmark_curve.dropna().copy()
+        if bench.empty:
+            return
+        ma_window = 200
+        ma = bench.rolling(ma_window, min_periods=ma_window).mean()
+        regime = bench >= ma
+        if regime.isna().all():
+            return
+        regime = regime.ffill().fillna(False)
+
+        last_state = None
+        span_start = None
+        for dt, is_bull in regime.items():
+            if last_state is None:
+                last_state = is_bull
+                span_start = dt
+                continue
+            if is_bull != last_state:
+                color = "green" if last_state else "red"
+                ax.axvspan(span_start, dt, color=color, alpha=0.08, linewidth=0)
+                span_start = dt
+                last_state = is_bull
+
+        if span_start is not None:
+            color = "green" if last_state else "red"
+            ax.axvspan(span_start, bench.index[-1], color=color, alpha=0.08, linewidth=0)
+
+    def _calc_regime_stats(self, daily_ret_strategy: pd.Series, benchmark_curve: pd.Series) -> dict:
+        """Calculate bull/bear win rates vs benchmark based on 200D MA regime."""
+        if benchmark_curve is None or benchmark_curve.empty:
+            return {}
+        benchmark_ret = benchmark_curve.pct_change().fillna(0)
+        common_dates = daily_ret_strategy.index.intersection(benchmark_ret.index)
+        if common_dates.empty:
+            return {}
+
+        strategy_ret = daily_ret_strategy.loc[common_dates]
+        bench_ret = benchmark_ret.loc[common_dates]
+        excess = strategy_ret - bench_ret
+
+        ma_window = 200
+        bench = benchmark_curve.loc[common_dates]
+        ma = bench.rolling(ma_window, min_periods=ma_window).mean()
+        regime = (bench >= ma).ffill().fillna(False)
+
+        bull_mask = regime
+        bear_mask = ~regime
+
+        bull_days = int(bull_mask.sum())
+        bear_days = int(bear_mask.sum())
+        bull_win_days = int((excess[bull_mask] > 0).sum()) if bull_days else 0
+        bear_win_days = int((excess[bear_mask] > 0).sum()) if bear_days else 0
+
+        bull_win_rate = bull_win_days / bull_days if bull_days else 0.0
+        bear_win_rate = bear_win_days / bear_days if bear_days else 0.0
+
+        return {
+            "bull_days": bull_days,
+            "bear_days": bear_days,
+            "bull_win_days": bull_win_days,
+            "bear_win_days": bear_win_days,
+            "bull_win_rate": bull_win_rate,
+            "bear_win_rate": bear_win_rate,
+        }
 
     def _plot_daily_comparison(self, daily_ret_strategy, benchmark_curve, out_dir):
         """绘制策略与大盘的对比分析图"""
@@ -330,6 +415,7 @@ class VectorBacktester:
             ax1.plot(common_dates, bench_cumret.values, 
                     label='大盘累计净值', color='gray', linewidth=2, linestyle='--', alpha=0.7)
             
+            self._add_market_regime_shading(ax1, benchmark_curve)
             ax1.fill_between(common_dates, strategy_cumret.values, bench_cumret.values,
                              where=(strategy_cumret.values >= bench_cumret.values),
                              color='green', alpha=0.2, label='跑赢区域')
@@ -370,6 +456,7 @@ class VectorBacktester:
             ax2.plot(common_dates, rolling_strategy, color='red', linewidth=2, label=f'{rolling_window}日策略收益', alpha=0.9)
             ax2.plot(common_dates, rolling_bench, color='gray', linewidth=2, linestyle='--', label=f'{rolling_window}日大盘收益', alpha=0.7)
             
+            self._add_market_regime_shading(ax2, benchmark_curve)
             ax2.axhline(y=0, color='black', linestyle='-', linewidth=1.0)
             ax2.fill_between(common_dates, 0, rolling_strategy, where=(rolling_strategy > 0), color='red', alpha=0.2)
             ax2.fill_between(common_dates, 0, rolling_bench, where=(rolling_bench > 0), color='gray', alpha=0.2)
@@ -390,6 +477,7 @@ class VectorBacktester:
             colors = ['green' if x > 0 else 'red' for x in rolling_excess_cum]
             ax3.bar(common_dates, rolling_excess_cum, color=colors, alpha=0.6, width=1.0)
             
+            self._add_market_regime_shading(ax3, benchmark_curve)
             ax3.axhline(y=0, color='black', linestyle='-', linewidth=1.0)
             ax3.fill_between(common_dates, 0, rolling_excess_cum, 
                              where=(rolling_excess_cum > 0), 

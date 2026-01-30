@@ -17,6 +17,7 @@ data/meta/*
 data/raw_cleaned/*
 reports
 !data/.gitkeep  # 保留空目录
+external
 
 # Logs
 logs/*

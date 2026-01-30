@@ -1,4 +1,4 @@
-# src/preprocessing/labels.py
+﻿# src/preprocessing/labels.py
 
 import pandas as pd
 import numpy as np
@@ -6,8 +6,35 @@ from tqdm import tqdm
 from src.utils.logger import get_logger
 from src.utils.io import read_parquet
 import os
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 
 logger = get_logger()
+
+def _calc_risk_label_for_series(args):
+    symbol, series, risk_type, window, min_periods = args
+    if risk_type == "downside_deviation":
+        def calc_downside_dev(returns):
+            negative_returns = returns[returns < 0]
+            if len(negative_returns) >= 2:
+                return negative_returns.std()
+            if len(returns) >= 3:
+                return returns.std()
+            return np.nan
+        min_periods_adjusted = max(5, window // 4)
+        return series.rolling(window=window, min_periods=min_periods_adjusted).apply(calc_downside_dev, raw=False)
+    if risk_type == "volatility":
+        return series.rolling(window=window, min_periods=min_periods).std()
+    if risk_type == "max_drawdown":
+        def calc_max_dd(returns):
+            if len(returns) < 3:
+                return np.nan
+            cum_returns = (1 + returns).cumprod()
+            running_max = cum_returns.expanding().max()
+            drawdown = (cum_returns - running_max) / running_max
+            return -drawdown.min()
+        return series.rolling(window=window, min_periods=min_periods).apply(calc_max_dd, raw=False)
+    raise ValueError(f"不支持的风险类型: {risk_type}")
 
 class LabelGenerator:
     def __init__(self, config: dict):

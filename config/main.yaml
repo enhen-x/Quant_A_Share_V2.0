@@ -1,4 +1,4 @@
-# config/main.yaml
+﻿# config/main.yaml
 
 # ==============================================================================
 # 1. 路径配置 (Paths)
@@ -140,7 +140,7 @@ preprocessing:
 
     use_vwap: true         # 开启 VWAP 计价
     filter_limit: true     # 开启一字板过滤
-    index_code: "000852.SH"
+    index_code: "000300.SH"
     index_dir: "index"
     
     binary_threshold: 0.0
@@ -155,6 +155,8 @@ preprocessing:
       type: "downside_deviation"      # volatility / downside_deviation / max_drawdown
       window: 20                      # 计算窗口（天数）
       min_periods: 10                 # 最小有效周期
+      parallel: false                 # 是否启用风险标签并行
+      n_jobs: -1                      # 并行进程数：-1=全部核心，0=自动(核心数-1)
 
 
 
@@ -326,7 +328,8 @@ strategy:
   mode: "long_topk"
   top_k: 5
   min_pred: 0.005
-  recommend_top_k: 10
+  recommend_top_k: 5
+  recommend_history_days: 1  # 推荐打分使用的最近交易日数量
 
   # === 新增：买入价格模式 ===
   # 信号日为 T 日，买入发生在 T+1 日

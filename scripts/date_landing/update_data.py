@@ -263,6 +263,7 @@ def main():
 
     # === 4. 每日推荐 (Recommendation) ===
     # 脚本: scripts/back_test/run_recommendation.py
+    # 推荐最近 N 个交易日由 config/main.yaml -> strategy.recommend_history_days 控制
     if not run_external_script(os.path.join("scripts", "back_test", "run_recommendation.py"), "策略推荐 (Recommendation)"):
         logger.warning("流程中断：推荐生成失败。")
         return

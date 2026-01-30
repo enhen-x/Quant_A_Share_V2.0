@@ -5,6 +5,8 @@ import numpy as np
 import os
 import datetime
 import joblib
+import time
+import gc
 from src.utils.config import GLOBAL_CONFIG
 from src.utils.io import read_parquet, ensure_dir
 from src.utils.logger import get_logger
@@ -75,9 +77,20 @@ class ModelTrainer:
 
     # === 单模型训练 (保持向后兼容) ===
     def train_model(self, X_train, y_train, X_val, y_val):
-        """训练单个 XGBoost 模型并返回"""
-        model = XGBModelWrapper()
-        model.train(X_train, y_train, X_val, y_val)
+        """训练单个模型并返回（支持 xgboost / lightgbm / limix）"""
+        model_type = self.model_cfg.get("model_type", "xgboost").lower()
+        if model_type == "lightgbm":
+            from src.model.lgb_model import LGBModelWrapper
+            model = LGBModelWrapper(task_type="regression")
+            feature_names = list(X_train.columns) if hasattr(X_train, "columns") else None
+            model.train(X_train, y_train, X_val, y_val, feature_names=feature_names)
+        elif model_type == "limix":
+            from src.model.limix_model import LimiXModelWrapper
+            model = LimiXModelWrapper(task_type="regression")
+            model.train(X_train, y_train, X_val, y_val)
+        else:
+            model = XGBModelWrapper()
+            model.train(X_train, y_train, X_val, y_val)
         return model
     
     # === 双头模型训练 ===
@@ -90,9 +103,10 @@ class ModelTrainer:
         """
         from src.model.lgb_model import LGBModelWrapper
         from src.model.xgb_model import XGBModelWrapper
+        from src.model.limix_model import LimiXModelWrapper
         
         # 获取统一的模型类型
-        model_type = self.dual_head_cfg.get("model_type", "xgboost")
+        model_type = self.dual_head_cfg.get("model_type", "xgboost").lower()
         
         # 获取收益头和风险头的参数
         params_return = self.dual_head_cfg.get("params_return", {})
@@ -112,6 +126,9 @@ class ModelTrainer:
             if model_type == "lightgbm":
                 return_model = LGBModelWrapper(task_type="regression", custom_params=params_return)
                 return_model.train(X_train, y_train_return, X_val, y_val_return, feature_names=feature_names)
+            elif model_type == "limix":
+                return_model = LimiXModelWrapper(task_type="regression", custom_params=params_return)
+                return_model.train(X_train, y_train_return, X_val, y_val_return)
             else:  # xgboost
                 return_model = XGBModelWrapper(task_type="regression", custom_params=params_return)
                 # XGBoost不需要feature_names参数
@@ -154,6 +171,9 @@ class ModelTrainer:
                 risk_early_stop = params_risk.get("early_stopping_rounds", None)
                 risk_model.train(X_train_clean, y_train_risk_clean, X_val_clean, y_val_risk_clean, 
                                feature_names=feature_names, early_stopping_rounds=risk_early_stop)
+            elif model_type == "limix":
+                risk_model = LimiXModelWrapper(task_type="regression", custom_params=params_risk)
+                risk_model.train(X_train_clean, y_train_risk_clean, X_val_clean, y_val_risk_clean)
             else:  # xgboost
                 risk_model = XGBModelWrapper(task_type="regression", custom_params=params_risk)
                 # XGBoost不需要feature_names参数
@@ -239,17 +259,122 @@ class ModelTrainer:
         ensure_dir(self.model_dir)
         
         logger.info(f"=== 开始训练任务 (Single Run: {self.version}) ===")
+        start_time = time.time()
         df, features, label = self.load_data()
+        logger.info(
+            f"Data loaded: rows={len(df)}, features={len(features)}, label={label}"
+        )
         
         split_date = self.model_cfg.get("train_val_split_date", "2022-01-01")
-        df["date"] = pd.to_datetime(df["date"])
-        train_mask = df["date"] <= split_date
-        val_mask = df["date"] > split_date
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.sort_values("date")
+            train_mask = df["date"] <= split_date
+            val_mask = df["date"] > split_date
+        else:
+            train_mask = None
+            val_mask = None
         
-        X_train = df.loc[train_mask, features]
-        X_val = df.loc[val_mask, features]
+        if train_mask is not None and val_mask is not None:
+            X_train = df.loc[train_mask, features]
+            X_val = df.loc[val_mask, features]
+            logger.info(
+                f"Split done: train={len(X_train)}, val={len(X_val)}, split_date={split_date}"
+            )
+        else:
+            X_train = None
+            X_val = None
+
+        limix_cfg = self.model_cfg.get("limix", {})
+        segment_rows = limix_cfg.get("segment_rows")
+        train_ratio = self.model_cfg.get("train_ratio", 0.8)
+
+        def _split_segment(segment: pd.DataFrame):
+            if "date" in segment.columns:
+                seg_dates = segment["date"]
+                seg_train = seg_dates <= split_date
+                seg_val = seg_dates > split_date
+                if seg_train.any() and seg_val.any():
+                    return seg_train, seg_val
+            n_total = len(segment)
+            n_train = max(1, int(n_total * train_ratio))
+            n_train = min(n_train, n_total - 1)
+            seg_train = np.zeros(n_total, dtype=bool)
+            seg_train[:n_train] = True
+            seg_val = ~seg_train
+            logger.warning("Segment split falls back to train_ratio due to date split mismatch.")
+            return seg_train, seg_val
         
         if self.dual_head_enabled:
+            model_type = self.dual_head_cfg.get("model_type", "xgboost").lower()
+            if model_type == "limix" and segment_rows:
+                total_rows = len(df)
+                num_segments = (total_rows + segment_rows - 1) // segment_rows
+                logger.info(
+                    f"LimiX segmented mode: rows={total_rows}, segment_rows={segment_rows}, segments={num_segments}"
+                )
+
+                pred_return = np.empty(total_rows, dtype=np.float32)
+                pred_risk = np.empty(total_rows, dtype=np.float32)
+                return_model = None
+                risk_model = None
+                label_risk = "label_risk"
+
+                if label_risk not in df.columns:
+                    logger.error(f"Missing risk label '{label_risk}' in data.")
+                    raise ValueError(f"Missing risk label '{label_risk}'")
+
+                for i in range(num_segments):
+                    start = i * segment_rows
+                    end = min(start + segment_rows, total_rows)
+                    segment = df.iloc[start:end]
+                    seg_train_mask, seg_val_mask = _split_segment(segment)
+
+                    X_train_seg = segment.loc[seg_train_mask, features]
+                    X_val_seg = segment.loc[seg_val_mask, features]
+                    y_train_return = segment.loc[seg_train_mask, label]
+                    y_val_return = segment.loc[seg_val_mask, label]
+                    y_train_risk = segment.loc[seg_train_mask, label_risk]
+                    y_val_risk = segment.loc[seg_val_mask, label_risk]
+
+                    logger.info(
+                        f"Segment {i + 1}/{num_segments}: rows={len(segment)}, "
+                        f"train={len(X_train_seg)}, val={len(X_val_seg)}"
+                    )
+
+                    return_model, risk_model = self.train_dual_head(
+                        X_train_seg, y_train_return, y_train_risk,
+                        X_val_seg, y_val_return, y_val_risk,
+                        feature_names=features
+                    )
+
+                    logger.info("Generating return predictions for segment...")
+                    pred_return[start:end] = return_model.predict(segment[features])
+                    logger.info("Generating risk predictions for segment...")
+                    pred_risk[start:end] = risk_model.predict(segment[features])
+
+                    gc.collect()
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+
+                df["pred_return"] = pred_return
+                df["pred_risk"] = pred_risk
+                df["pred_score"] = self.fuse_predictions(pred_return, pred_risk)
+
+                if return_model is not None:
+                    return_model.save(os.path.join(self.model_dir, "model_return.joblib"))
+                if risk_model is not None:
+                    risk_model.save(os.path.join(self.model_dir, "model_risk.joblib"))
+
+                out_cols = ["date", "symbol", "close", label, label_risk, "pred_return", "pred_risk", "pred_score"]
+                out_cols = [c for c in out_cols if c in df.columns]
+                df[out_cols].to_parquet(os.path.join(self.model_dir, "predictions.parquet"), index=False)
+                logger.info(f"Total elapsed: {time.time() - start_time:.2f}s")
+                return
             # ==========================================
             # 双头模型训练 (收益+风险预测)
             # ==========================================
@@ -290,8 +415,20 @@ class ModelTrainer:
                     risk_model.save(os.path.join(self.model_dir, "model_risk.joblib"))
             
             # 生成预测
-            pred_return = return_model.predict(df[features]) if return_model else None
-            pred_risk = risk_model.predict(df[features]) if risk_model else None
+            if return_model:
+                logger.info("Generating return predictions...")
+                t0 = time.time()
+                pred_return = return_model.predict(df[features])
+                logger.info(f"Return predictions done in {time.time() - t0:.2f}s")
+            else:
+                pred_return = None
+            if risk_model:
+                logger.info("Generating risk predictions...")
+                t0 = time.time()
+                pred_risk = risk_model.predict(df[features])
+                logger.info(f"Risk predictions done in {time.time() - t0:.2f}s")
+            else:
+                pred_risk = None
             
             # 融合预测
             df["pred_return"] = pred_return
@@ -302,6 +439,7 @@ class ModelTrainer:
             out_cols = ["date", "symbol", "close", label, label_risk, "pred_return", "pred_risk", "pred_score"]
             out_cols = [c for c in out_cols if c in df.columns]
             df[out_cols].to_parquet(os.path.join(self.model_dir, "predictions.parquet"), index=False)
+            logger.info(f"Total elapsed: {time.time() - start_time:.2f}s")
             
             logger.info(f"双头模型训练完成。")
             logger.info(f"融合方法: {self.dual_head_cfg.get('fusion', {}).get('method', 'rank_ratio')}")
@@ -315,10 +453,15 @@ class ModelTrainer:
             y_val = df.loc[val_mask, label]
             
             model = self.train_model(X_train, y_train, X_val, y_val)
-            model.save(os.path.join(self.model_dir, "model.json"))
+            model_type = self.model_cfg.get("model_type", "xgboost").lower()
+            if model_type == "xgboost":
+                model.save(os.path.join(self.model_dir, "model.json"))
+            else:
+                model.save(os.path.join(self.model_dir, "model.joblib"))
             
             df["pred_score"] = model.predict(df[features])
             out_cols = ["date", "symbol", "close", label, "pred_score"]
             df[out_cols].to_parquet(os.path.join(self.model_dir, "predictions.parquet"), index=False)
+            logger.info(f"Total elapsed: {time.time() - start_time:.2f}s")
             
             logger.info(f"单次训练完成。")

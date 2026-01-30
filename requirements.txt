@@ -56,3 +56,10 @@ scipy>=1.10              # 统计分析
 # --- 实盘交易 (Live Trading) ---
 easytrader>=0.23.0      # 券商交易接口（支持雪球、同花顺等）
 schedule>=1.1.0         # 定时任务调度
+
+# --- LimiX (optional) ---
+# LimiX dependencies are heavy; install on demand or use its official environment.
+# torch>=2.1
+# einops>=0.6
+# huggingface-hub>=0.20
+# kditransform>=1.1.0
