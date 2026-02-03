@@ -73,8 +73,15 @@ class MonteCarloAnalyzer:
         self.dual_head_cfg = self.config["model"].get("dual_head", {})
         
         # 获取原始融合权重
-        self.base_reg_weight = self.dual_head_cfg.get("regression", {}).get("weight", 0.6)
-        self.base_cls_weight = self.dual_head_cfg.get("classification", {}).get("weight", 0.4)
+        self.base_return_weight = self.dual_head_cfg.get("return_head", {}).get(
+            "weight",
+            self.dual_head_cfg.get("regression", {}).get("weight", 0.6),
+        )
+        self.base_risk_weight = self.dual_head_cfg.get("risk_head", {}).get(
+            "weight",
+            self.dual_head_cfg.get("classification", {}).get("weight", 0.4),
+        )
+        self.fusion_cfg = self.dual_head_cfg.get("fusion", {})
         
         # 回测器和策略
         self.backtester = VectorBacktester()
@@ -106,8 +113,81 @@ class MonteCarloAnalyzer:
             logger.info(f"使用预测文件: {pred_path}")
             df = read_parquet(pred_path)
             df["date"] = pd.to_datetime(df["date"])
-            return df
+            return self._ensure_pred_score(df)
         return None
+    
+    def _get_dual_head_cols(self, pred_df: pd.DataFrame) -> Optional[Tuple[str, str]]:
+        if "pred_return" in pred_df.columns and "pred_risk" in pred_df.columns:
+            return "pred_return", "pred_risk"
+        if "pred_reg" in pred_df.columns and "pred_cls" in pred_df.columns:
+            return "pred_reg", "pred_cls"
+        return None
+
+    @staticmethod
+    def _min_max_normalize(arr: np.ndarray) -> np.ndarray:
+        arr = np.array(arr)
+        min_val, max_val = arr.min(), arr.max()
+        if max_val - min_val > 1e-8:
+            return (arr - min_val) / (max_val - min_val)
+        return np.zeros_like(arr)
+
+    def _fuse_predictions(
+        self,
+        pred_return: np.ndarray,
+        pred_risk: np.ndarray,
+        method: Optional[str] = None,
+        return_weight: Optional[float] = None,
+        risk_weight: Optional[float] = None,
+        risk_aversion: Optional[float] = None,
+    ) -> np.ndarray:
+        method = method or self.fusion_cfg.get("method", "rank_ratio")
+        normalize = self.fusion_cfg.get("normalize", True)
+        return_weight = return_weight if return_weight is not None else self.base_return_weight
+        risk_weight = risk_weight if risk_weight is not None else self.base_risk_weight
+        risk_aversion = risk_aversion if risk_aversion is not None else self.fusion_cfg.get("risk_aversion", 2.0)
+
+        if pred_return is None or pred_risk is None:
+            logger.warning("pred_return or pred_risk is missing; fallback to available predictions.")
+            return pred_return if pred_return is not None else pred_risk
+
+        if method == "sharpe_like":
+            epsilon = 1e-6
+            return pred_return / (pred_risk + epsilon)
+        if method == "rank_ratio":
+            from scipy.stats import rankdata
+            rank_return = rankdata(pred_return)
+            rank_risk = rankdata(pred_risk)
+            return rank_return / (rank_risk + 1)
+        if method == "utility":
+            if normalize:
+                pred_return = self._min_max_normalize(pred_return)
+                pred_risk = self._min_max_normalize(pred_risk)
+            return pred_return - risk_aversion * (pred_risk ** 2)
+        if method == "weighted_average":
+            if normalize:
+                pred_return = self._min_max_normalize(pred_return)
+                pred_risk = self._min_max_normalize(pred_risk)
+            return return_weight * pred_return - risk_weight * pred_risk
+
+        logger.warning("Unknown fusion method: %s. Fallback to rank_ratio.", method)
+        from scipy.stats import rankdata
+        rank_return = rankdata(pred_return)
+        rank_risk = rankdata(pred_risk)
+        return rank_return / (rank_risk + 1)
+
+    def _ensure_pred_score(self, pred_df: pd.DataFrame) -> pd.DataFrame:
+        if "pred_score" in pred_df.columns and pred_df["pred_score"].notna().any():
+            return pred_df
+        dual_cols = self._get_dual_head_cols(pred_df)
+        if not dual_cols:
+            return pred_df
+        pred_df = pred_df.copy()
+        return_col, risk_col = dual_cols
+        pred_df["pred_score"] = self._fuse_predictions(
+            pred_df[return_col].values,
+            pred_df[risk_col].values,
+        )
+        return pred_df
     
     def _run_single_backtest(self, pred_df: pd.DataFrame, silent: bool = True) -> Optional[Dict]:
         """
@@ -190,46 +270,43 @@ class MonteCarloAnalyzer:
         """
         logger.info(f">>> 执行权重扰动模拟 ({self.n_simulations} 次)...")
         results = []
-        
-        # 检查是否有 pred_reg 和 pred_cls 列
-        has_dual_head = "pred_reg" in pred_df.columns and "pred_cls" in pred_df.columns
-        
-        if not has_dual_head:
-            logger.warning("  预测文件不包含双头模型输出 (pred_reg, pred_cls)，跳过权重扰动模拟")
+
+        dual_cols = self._get_dual_head_cols(pred_df)
+        if not dual_cols:
+            logger.warning("  Missing dual-head prediction columns, skip weight perturbation.")
             return results
-        
+
+        fusion_method = self.fusion_cfg.get("method", "rank_ratio")
+        if fusion_method != "weighted_average":
+            logger.warning("  Fusion method=%s. Weight perturbation only supports weighted_average.", fusion_method)
+            return results
+
+        return_col, risk_col = dual_cols
+
         for i in range(self.n_simulations):
-            # 随机生成权重 (保证和为1)
-            reg_weight = np.random.uniform(0.2, 0.8)
-            cls_weight = 1.0 - reg_weight
-            
-            # 重新计算融合分数
+            return_weight = np.random.uniform(0.2, 0.8)
+            risk_weight = 1.0 - return_weight
+
             perturbed_df = pred_df.copy()
-            
-            # 归一化
-            def min_max_normalize(arr):
-                arr = np.array(arr)
-                min_val, max_val = arr.min(), arr.max()
-                if max_val - min_val < 1e-9:
-                    return np.zeros_like(arr)
-                return (arr - min_val) / (max_val - min_val)
-            
-            pred_reg_norm = min_max_normalize(perturbed_df["pred_reg"].values)
-            pred_cls_norm = min_max_normalize(perturbed_df["pred_cls"].values)
-            
-            perturbed_df["pred_score"] = reg_weight * pred_reg_norm + cls_weight * pred_cls_norm
-            
+            perturbed_df["pred_score"] = self._fuse_predictions(
+                perturbed_df[return_col].values,
+                perturbed_df[risk_col].values,
+                method="weighted_average",
+                return_weight=return_weight,
+                risk_weight=risk_weight,
+            )
+
             metrics = self._run_single_backtest(perturbed_df)
             if metrics:
                 metrics["simulation_id"] = i
                 metrics["method"] = "weight_perturbation"
-                metrics["reg_weight"] = reg_weight
-                metrics["cls_weight"] = cls_weight
+                metrics["return_weight"] = return_weight
+                metrics["risk_weight"] = risk_weight
                 results.append(metrics)
-            
+
             if (i + 1) % 100 == 0:
                 logger.info(f"  权重扰动进度: {i + 1}/{self.n_simulations}")
-        
+
         logger.info(f"  权重扰动完成: {len(results)} 次有效模拟")
         return results
     
@@ -364,6 +441,7 @@ class MonteCarloAnalyzer:
                 "median": results_df["max_drawdown"].median(),
                 "std": results_df["max_drawdown"].std(),
                 "p5": results_df["max_drawdown"].quantile(0.05),
+                "p90": results_df["max_drawdown"].quantile(0.90),
                 "p95": results_df["max_drawdown"].quantile(0.95),
             }
         }
@@ -411,6 +489,8 @@ class MonteCarloAnalyzer:
         ax3.hist(drawdowns, bins=50, edgecolor='black', alpha=0.7, color='#e74c3c')
         ax3.axvline(stats["max_drawdown"]["median"] * 100, color='blue', linestyle='--', 
                    linewidth=2, label=f'中位数: {stats["max_drawdown"]["median"]*100:.1f}%')
+        ax3.axvline(stats["max_drawdown"]["p90"] * 100, color='purple', linestyle=':',
+                   linewidth=2, label=f'90%分位: {stats["max_drawdown"]["p90"]*100:.1f}%')
         ax3.set_xlabel("最大回撤 (%)")
         ax3.set_ylabel("频次")
         ax3.set_title("最大回撤分布")
@@ -440,6 +520,129 @@ class MonteCarloAnalyzer:
         plt.savefig(chart_path, dpi=150)
         plt.close()
         logger.info(f"分布图已保存: {chart_path}")
+
+    def plot_drawdown_distribution(self, results_df: pd.DataFrame, stats: Dict):
+        """输出回撤分布图与统计"""
+        if results_df.empty:
+            return
+
+        drawdown_abs = (-results_df["max_drawdown"]).clip(lower=0) * 100
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.hist(drawdown_abs, bins=40, edgecolor='black', alpha=0.75, color='#c0392b')
+        ax.axvline((-stats["max_drawdown"]["median"]) * 100, color='blue', linestyle='--',
+                   linewidth=2, label=f'中位数: {-stats["max_drawdown"]["median"]*100:.1f}%')
+        ax.axvline((-stats["max_drawdown"]["p90"]) * 100, color='purple', linestyle=':',
+                   linewidth=2, label=f'90%分位: {-stats["max_drawdown"]["p90"]*100:.1f}%')
+        ax.axvline((-stats["max_drawdown"]["p95"]) * 100, color='orange', linestyle=':',
+                   linewidth=2, label=f'95%分位: {-stats["max_drawdown"]["p95"]*100:.1f}%')
+        ax.set_xlabel("最大回撤幅度(%)")
+        ax.set_ylabel("频次")
+        ax.set_title("最大回撤分布(正值)")
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+
+        chart_path = os.path.join(self.report_dir, "drawdown_distribution.png")
+        plt.tight_layout()
+        plt.savefig(chart_path, dpi=150)
+        plt.close()
+        logger.info(f"回撤分布图已保存: {chart_path}")
+
+        dd_stats = {
+            "count": int(len(drawdown_abs)),
+            "mean": float(drawdown_abs.mean()),
+            "median": float(drawdown_abs.median()),
+            "std": float(drawdown_abs.std()),
+            "p5": float(drawdown_abs.quantile(0.05)),
+            "p25": float(drawdown_abs.quantile(0.25)),
+            "p75": float(drawdown_abs.quantile(0.75)),
+            "p90": float(drawdown_abs.quantile(0.90)),
+            "p95": float(drawdown_abs.quantile(0.95)),
+            "min": float(drawdown_abs.min()),
+            "max": float(drawdown_abs.max()),
+        }
+        dd_path = os.path.join(self.report_dir, "drawdown_stats.csv")
+        pd.DataFrame([dd_stats]).to_csv(dd_path, index=False, encoding="utf-8-sig")
+        logger.info(f"回撤统计已保存: {dd_path}")
+
+    def analyze_time_clustered_drawdown(
+        self,
+        results_df: pd.DataFrame,
+        extreme_quantile: float = 0.90,
+    ):
+        """
+        基于 time_window 模拟结果，分析回撤的时间聚集性，并剔除极端行情后的“日常回撤”。
+        extreme_quantile: 用于定义极端回撤阈值（如 0.90=剔除最差10%）
+        """
+        time_df = results_df[results_df["method"] == "time_window"].copy()
+        if time_df.empty:
+            logger.warning("time_window 结果为空，无法进行回撤时间聚集分析。")
+            return
+
+        # 只保留有日期的样本
+        time_df = time_df.dropna(subset=["start_date", "end_date"])
+        if time_df.empty:
+            logger.warning("time_window 结果缺少日期，无法进行回撤时间聚集分析。")
+            return
+
+        # 回撤幅度（正数）
+        time_df["drawdown_abs"] = (-time_df["max_drawdown"]).clip(lower=0) * 100
+        time_df["start_year"] = pd.to_datetime(time_df["start_date"]).dt.year
+
+        # 1) 按年份统计回撤分布
+        year_stats = (
+            time_df.groupby("start_year")["drawdown_abs"]
+            .agg(["count", "mean", "median", "std", "min", "max"])
+            .reset_index()
+        )
+        year_path = os.path.join(self.report_dir, "drawdown_by_year.csv")
+        year_stats.to_csv(year_path, index=False, encoding="utf-8-sig")
+        logger.info(f"按年份回撤统计已保存: {year_path}")
+
+        # 年份箱线图（展示回撤时间聚集性）
+        fig, ax = plt.subplots(figsize=(10, 5))
+        years = sorted(time_df["start_year"].unique())
+        data = [time_df[time_df["start_year"] == y]["drawdown_abs"].values for y in years]
+        ax.boxplot(data, labels=years, showfliers=False)
+        ax.set_xlabel("起始年份")
+        ax.set_ylabel("最大回撤幅度(%)")
+        ax.set_title("回撤在时间上的聚集性(按年份)")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        year_plot = os.path.join(self.report_dir, "drawdown_by_year.png")
+        plt.savefig(year_plot, dpi=150)
+        plt.close()
+        logger.info(f"按年份回撤分布图已保存: {year_plot}")
+
+        # 2) 排除极端行情：剔除最差 X% 回撤样本
+        threshold = time_df["drawdown_abs"].quantile(extreme_quantile)
+        normal_df = time_df[time_df["drawdown_abs"] <= threshold].copy()
+
+        normal_stats = {
+            "count": int(len(normal_df)),
+            "extreme_quantile": float(extreme_quantile),
+            "extreme_threshold": float(threshold),
+            "mean": float(normal_df["drawdown_abs"].mean()),
+            "median": float(normal_df["drawdown_abs"].median()),
+            "std": float(normal_df["drawdown_abs"].std()),
+            "p5": float(normal_df["drawdown_abs"].quantile(0.05)),
+            "p25": float(normal_df["drawdown_abs"].quantile(0.25)),
+            "p75": float(normal_df["drawdown_abs"].quantile(0.75)),
+            "p90": float(normal_df["drawdown_abs"].quantile(0.90)),
+            "p95": float(normal_df["drawdown_abs"].quantile(0.95)),
+            "min": float(normal_df["drawdown_abs"].min()),
+            "max": float(normal_df["drawdown_abs"].max()),
+        }
+        normal_path = os.path.join(self.report_dir, "drawdown_normal_excluding_extremes.csv")
+        pd.DataFrame([normal_stats]).to_csv(normal_path, index=False, encoding="utf-8-sig")
+        logger.info(f"剔除极端行情后的回撤统计已保存: {normal_path}")
+
+        # 输出被剔除的极端窗口列表（便于复盘）
+        extreme_df = time_df[time_df["drawdown_abs"] > threshold].copy()
+        extreme_df = extreme_df.sort_values("drawdown_abs", ascending=False)
+        extreme_out = os.path.join(self.report_dir, "drawdown_extreme_windows.csv")
+        extreme_df.to_csv(extreme_out, index=False, encoding="utf-8-sig")
+        logger.info(f"极端回撤窗口已保存: {extreme_out}")
     
     def plot_noise_sensitivity(self, results_df: pd.DataFrame):
         """绘制噪音敏感性图"""
@@ -495,13 +698,13 @@ class MonteCarloAnalyzer:
     def plot_weight_sensitivity(self, results_df: pd.DataFrame):
         """绘制权重敏感性图"""
         weight_results = results_df[results_df["method"] == "weight_perturbation"]
-        if weight_results.empty or "reg_weight" not in weight_results.columns:
+        if weight_results.empty or "return_weight" not in weight_results.columns:
             return
         
         fig, ax = plt.subplots(figsize=(10, 6))
         
         scatter = ax.scatter(
-            weight_results["reg_weight"], 
+            weight_results["return_weight"], 
             weight_results["annual_return"] * 100,
             c=weight_results["sharpe"], 
             cmap='RdYlGn', 
@@ -512,15 +715,15 @@ class MonteCarloAnalyzer:
         # 标记最佳点
         best_idx = weight_results["sharpe"].idxmax()
         best_row = weight_results.loc[best_idx]
-        ax.scatter(best_row["reg_weight"], best_row["annual_return"] * 100, 
+        ax.scatter(best_row["return_weight"], best_row["annual_return"] * 100, 
                   s=200, c='red', marker='*', edgecolors='black', linewidths=2,
-                  label=f'最佳: α={best_row["reg_weight"]:.2f}, 夏普={best_row["sharpe"]:.2f}')
+                  label=f'最佳: w_return={best_row["return_weight"]:.2f}, 夏普={best_row["sharpe"]:.2f}')
         
         # 标记原始权重
-        ax.axvline(self.base_reg_weight, color='orange', linestyle='--', 
-                  linewidth=2, label=f'配置权重: α={self.base_reg_weight:.2f}')
+        ax.axvline(self.base_return_weight, color='orange', linestyle='--', 
+                  linewidth=2, label=f'配置权重: w_return={self.base_return_weight:.2f}')
         
-        ax.set_xlabel("回归权重 (α)")
+        ax.set_xlabel("Return weight (w_return)")
         ax.set_ylabel("年化收益率 (%)")
         ax.set_title("融合权重敏感性分析")
         plt.colorbar(scatter, ax=ax, label="夏普比率")
@@ -582,6 +785,7 @@ class MonteCarloAnalyzer:
         report_lines.append(f"  中位数:   {md['median']*100:>8.2f}%")
         report_lines.append(f"  标准差:   {md['std']*100:>8.2f}%")
         report_lines.append(f"  5%分位:   {md['p5']*100:>8.2f}%")
+        report_lines.append(f"  90%??:  {md['p90']*100:>8.2f}%")
         report_lines.append(f"  95%分位:  {md['p95']*100:>8.2f}%")
         report_lines.append("")
         
@@ -649,7 +853,8 @@ def main():
     logger.info(f"预测数据: {len(pred_df)} 行, 日期范围: {pred_df['date'].min()} ~ {pred_df['date'].max()}")
     
     # 检查双头模型列
-    has_dual_head = "pred_reg" in pred_df.columns and "pred_cls" in pred_df.columns
+    dual_cols = analyzer._get_dual_head_cols(pred_df)
+    has_dual_head = dual_cols is not None
     logger.info(f"双头模型预测列: {'存在' if has_dual_head else '不存在'}")
     
     # 2. 执行各种模拟
@@ -689,6 +894,8 @@ def main():
     
     # 5. 生成可视化
     analyzer.plot_return_distribution(results_df, stats)
+    analyzer.plot_drawdown_distribution(results_df, stats)
+    analyzer.analyze_time_clustered_drawdown(results_df, extreme_quantile=0.90)
     analyzer.plot_noise_sensitivity(results_df)
     if has_dual_head:
         analyzer.plot_weight_sensitivity(results_df)
