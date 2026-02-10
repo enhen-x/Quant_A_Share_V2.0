@@ -30,7 +30,7 @@ paths:
 data:
   source: "baostock"
   start_date: "2010-01-01"
-  end_date: "2025-12-31"   # 可设置为 "auto" 以自动使用当前日期
+  end_date: "2026-02-06"   # 可设置为 "auto" 以自动使用当前日期
 
   # 增量更新时的配置
   update:

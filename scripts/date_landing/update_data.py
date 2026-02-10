@@ -19,6 +19,7 @@ from src.data_source.datahub import DataHub
 from src.utils.config import GLOBAL_CONFIG
 from src.utils.io import read_parquet, save_parquet, ensure_dir
 from src.utils.logger import get_logger
+import glob
 
 logger = get_logger()
 
@@ -202,6 +203,89 @@ class DataUpdater:
         
         logger.info(f"更新完成。已更新: {update_count}, 跳过(无需更新/停牌): {skip_count}")
 
+def verify_data_freshness(step_name, data_dir, file_pattern="*.parquet", single_file=None):
+    """
+    验证数据目录或单个文件中的最新日期
+    :param step_name: 步骤名称
+    :param data_dir: 数据目录 (相对于 project_root)
+    :param file_pattern: 文件匹配模式
+    :param single_file: 如果指定，只检查该单文件 (相对于 project_root)
+    """
+    logger.info(f"\n📅 [{step_name}] 数据新鲜度检查:")
+    
+    try:
+        if single_file:
+            # 检查单个文件
+            file_path = os.path.join(project_root, single_file)
+            if not os.path.exists(file_path):
+                logger.warning(f"   文件不存在: {single_file}")
+                return
+            df = read_parquet(file_path)
+            if df is not None and not df.empty and "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"])
+                latest = df["date"].max()
+                earliest = df["date"].min()
+                n_dates = df["date"].nunique()
+                logger.info(f"   📄 {os.path.basename(single_file)}")
+                logger.info(f"      日期范围: {earliest.strftime('%Y-%m-%d')} ~ {latest.strftime('%Y-%m-%d')} ({n_dates} 个交易日)")
+                
+                # 检查是否有 label 列，统计其 NaN 情况
+                if "label" in df.columns:
+                    label_valid = df["label"].notna().sum()
+                    label_nan = df["label"].isna().sum()
+                    label_latest = df[df["label"].notna()]["date"].max() if label_valid > 0 else None
+                    logger.info(f"      标签(label): 有效={label_valid:,}, NaN={label_nan:,}")
+                    if label_latest:
+                        logger.info(f"      标签最新有效日期: {label_latest.strftime('%Y-%m-%d')}")
+                    else:
+                        logger.warning(f"      ⚠️ 标签全部为 NaN!")
+                
+                # 检查 feat_ 列情况
+                feat_cols = [c for c in df.columns if c.startswith("feat_")]
+                if feat_cols:
+                    feat_latest = df.dropna(subset=feat_cols[:3])["date"].max() if not df.dropna(subset=feat_cols[:3]).empty else None
+                    if feat_latest:
+                        logger.info(f"      特征最新有效日期: {feat_latest.strftime('%Y-%m-%d')} ({len(feat_cols)} 个特征列)")
+            else:
+                logger.warning(f"   文件为空或缺少 date 列: {single_file}")
+            return
+
+        # 检查目录下的文件
+        dir_path = os.path.join(project_root, data_dir)
+        if not os.path.exists(dir_path):
+            logger.warning(f"   目录不存在: {data_dir}")
+            return
+        
+        files = [f for f in os.listdir(dir_path) if f.endswith(".parquet") and f[0].isdigit()]
+        if not files:
+            logger.warning(f"   目录下没有股票数据文件: {data_dir}")
+            return
+        
+        # 随机抽样几只股票检查
+        import random
+        sample_files = random.sample(files, min(5, len(files)))
+        latest_dates = []
+        
+        for f in sample_files:
+            fp = os.path.join(dir_path, f)
+            df = read_parquet(fp)
+            if df is not None and not df.empty and "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"])
+                latest_dates.append((f.replace(".parquet", ""), df["date"].max()))
+        
+        if latest_dates:
+            overall_max = max(d for _, d in latest_dates)
+            overall_min = min(d for _, d in latest_dates)
+            logger.info(f"   共 {len(files)} 只股票, 抽样 {len(sample_files)} 只:")
+            for sym, dt in latest_dates:
+                logger.info(f"      {sym}: 最新日期 {dt.strftime('%Y-%m-%d')}")
+            logger.info(f"   📊 抽样最新日期范围: {overall_min.strftime('%Y-%m-%d')} ~ {overall_max.strftime('%Y-%m-%d')}")
+        else:
+            logger.warning(f"   抽样文件均无有效日期数据")
+    except Exception as e:
+        logger.error(f"   数据新鲜度检查失败: {e}")
+
+
 def run_external_script(script_rel_path, step_name):
     """
     调用外部 Python 脚本
@@ -248,18 +332,29 @@ def main():
     except Exception as e:
         logger.error(f"数据更新阶段发生严重错误: {e}")
         return
+    
+    # ✅ 步骤1完成 - 验证原始数据新鲜度
+    verify_data_freshness("步骤1: 数据下载", GLOBAL_CONFIG["paths"]["data_raw"])
 
     # === 2. 清洗数据 (Clean) ===
     # 脚本: scripts/analisis/clean_and_check.py
     if not run_external_script(os.path.join("scripts", "analisis", "clean_and_check.py"), "数据清洗 (Clean)"):
         logger.warning("流程中断：数据清洗失败。")
         return
+    
+    # ✅ 步骤2完成 - 验证清洗后数据新鲜度
+    verify_data_freshness("步骤2: 数据清洗", GLOBAL_CONFIG["paths"]["data_cleaned"])
 
     # === 3. 构建特征 (Feature Engineering) ===
     # 脚本: scripts/feature_create/rebuild_features.py
     if not run_external_script(os.path.join("scripts", "feature_create", "rebuild_features.py"), "特征工程 (Features)"):
         logger.warning("流程中断：特征构建失败。")
         return
+    
+    # ✅ 步骤3完成 - 验证特征数据新鲜度（含标签检查）
+    concat_file = GLOBAL_CONFIG.get("preprocessing", {}).get("batch", {}).get("concat_file", "all_stocks.parquet")
+    verify_data_freshness("步骤3: 特征工程", None, 
+                          single_file=os.path.join(GLOBAL_CONFIG["paths"]["data_processed"], concat_file))
 
     # === 4. 每日推荐 (Recommendation) ===
     # 脚本: scripts/back_test/run_recommendation.py
@@ -267,6 +362,23 @@ def main():
     if not run_external_script(os.path.join("scripts", "back_test", "run_recommendation.py"), "策略推荐 (Recommendation)"):
         logger.warning("流程中断：推荐生成失败。")
         return
+    
+    # ✅ 步骤4完成 - 验证推荐结果
+    picks_dir = os.path.join(GLOBAL_CONFIG["paths"]["reports"], "daily_picks")
+    picks_abs = os.path.join(project_root, picks_dir)
+    if os.path.exists(picks_abs):
+        csv_files = sorted(glob.glob(os.path.join(picks_abs, "picks_*.csv")))
+        if csv_files:
+            latest_pick = csv_files[-1]
+            logger.info(f"\n📅 [步骤4: 策略推荐] 数据新鲜度检查:")
+            logger.info(f"   📄 最新推荐文件: {os.path.basename(latest_pick)}")
+            try:
+                df_pick = pd.read_csv(latest_pick)
+                logger.info(f"   推荐股票数: {len(df_pick)}")
+                if "symbol" in df_pick.columns:
+                    logger.info(f"   推荐列表: {', '.join(df_pick['symbol'].tolist())}")
+            except Exception as e:
+                logger.warning(f"   读取推荐文件失败: {e}")
     
     logger.info("\n" + "="*60)
     logger.info("🎉🎉🎉 每日全流程任务顺利完成！请查看 reports 目录下的推荐结果。")
