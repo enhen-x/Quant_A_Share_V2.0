@@ -278,10 +278,13 @@ class LabelGenerator:
 
     def _generate_risk_label(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        [新增] 生成风险标签（下行风险/波动率/最大回撤）
+        生成风险标签（下行风险/波动率/最大回撤）
+        
+        使用历史已实现日收益率（close.pct_change）计算，而非前瞻标签 label，
+        以避免数据泄露（label 包含未来 horizon 天的收益信息）。
         
         Args:
-            df: 股票数据框，需包含 symbol, date, label 列
+            df: 股票数据框，需包含 symbol, date, close 列
             
         Returns:
             添加了 label_risk 列的数据框
@@ -292,34 +295,38 @@ class LabelGenerator:
         
         # 只在第一次调用时输出
         if not self._risk_label_logged:
-            logger.info(f"开始生成风险标签: {risk_type}, 窗口={window}")
+            logger.info(f"开始生成风险标签: {risk_type}, 窗口={window} (基于历史日收益率)")
             self._risk_label_logged = True
         
         # 确保按 symbol + date 排序
         df = df.sort_values(["symbol", "date"])
         
+        # 使用历史已实现日收益率，优先复用已计算的 feat_log_ret，否则用 close 计算
+        if "feat_log_ret" in df.columns:
+            risk_source_col = "feat_log_ret"
+        else:
+            df["_daily_ret"] = df.groupby("symbol")["close"].pct_change()
+            risk_source_col = "_daily_ret"
+        
         if risk_type == "downside_deviation":
             # 下行风险：优先计算负收益的标准差，不足时使用整体波动率
             def calc_downside_dev(returns):
                 negative_returns = returns[returns < 0]
-                # 降低阈值：从3改为2，提高数据利用率
                 if len(negative_returns) >= 2:
                     return negative_returns.std()
-                # Fallback: 负样本不足时使用整体波动率
                 elif len(returns) >= 3:
-                    return returns.std()  # 使用整体波动作为风险估计
+                    return returns.std()
                 else:
-                    return np.nan  # 样本总数也不足
+                    return np.nan
             
-            # 降低 min_periods: 从10改为5 (或window//4)
             min_periods_adjusted = max(5, window // 4)
-            df["label_risk"] = df.groupby("symbol")["label"].transform(
+            df["label_risk"] = df.groupby("symbol")[risk_source_col].transform(
                 lambda x: x.rolling(window=window, min_periods=min_periods_adjusted).apply(calc_downside_dev, raw=False)
             )
         
         elif risk_type == "volatility":
             # 标准波动率
-            df["label_risk"] = df.groupby("symbol")["label"].transform(
+            df["label_risk"] = df.groupby("symbol")[risk_source_col].transform(
                 lambda x: x.rolling(window=window, min_periods=min_periods).std()
             )
         
@@ -333,18 +340,21 @@ class LabelGenerator:
                 drawdown = (cum_returns - running_max) / running_max
                 return -drawdown.min()  # 返回正值
             
-            df["label_risk"] = df.groupby("symbol")["label"].transform(
+            df["label_risk"] = df.groupby("symbol")[risk_source_col].transform(
                 lambda x: x.rolling(window=window, min_periods=min_periods).apply(calc_max_dd, raw=False)
             )
         
         else:
             raise ValueError(f"不支持的风险类型: {risk_type}")
         
+        # 清理临时列
+        if "_daily_ret" in df.columns:
+            df = df.drop(columns=["_daily_ret"])
+        
         # 统计（使用 debug 级别，避免每只股票都输出）
         valid_count = df["label_risk"].notna().sum()
         total_count = len(df)
         
-        # 统计风险标签的分布（使用 debug 级别）
         if valid_count > 0:
             risk_stats = df["label_risk"].describe()
             logger.debug(f"风险标签: {valid_count:,}/{total_count:,} ({valid_count/total_count:.1%}), "
