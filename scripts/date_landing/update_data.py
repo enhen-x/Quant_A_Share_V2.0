@@ -6,6 +6,8 @@ import argparse
 import datetime
 import pandas as pd
 import subprocess
+import time
+import random
 from tqdm import tqdm
 
 # 路径适配
@@ -28,6 +30,7 @@ class DataUpdater:
         self.config = GLOBAL_CONFIG
         self.paths = self.config["paths"]
         self.datahub = DataHub()
+        self.retry_cfg = self._load_retry_config()
         
         # 今天的日期
         self.today = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -36,6 +39,72 @@ class DataUpdater:
         self.calendar_path = os.path.join(self.paths["data_meta"], "trade_calendar.parquet")
         self.trade_dates = []
         self._load_local_calendar()
+
+    def _load_retry_config(self):
+        cfg = self.config.get("data", {}).get("retry", {})
+        return {
+            "max_retries": int(cfg.get("max_retries", 3)),
+            "base_sleep": float(cfg.get("base_sleep", 1.0)),
+            "max_sleep": float(cfg.get("max_sleep", 8.0)),
+            "jitter": float(cfg.get("jitter", 0.5)),
+            "reconnect": bool(cfg.get("reconnect", True)),
+            "min_interval": float(cfg.get("min_interval", 0.0)),
+        }
+
+    def _is_transient_error(self, err: Exception) -> bool:
+        if isinstance(err, (ConnectionError, TimeoutError)):
+            return True
+        if isinstance(err, OSError):
+            winerror = getattr(err, "winerror", None)
+            if winerror in (10054, 10053, 10060):
+                return True
+        msg = str(err).lower()
+        transient_keys = [
+            "timed out",
+            "timeout",
+            "connection reset",
+            "connection aborted",
+            "remote host",
+            "forcibly closed",
+            "10054",
+            "10053",
+            "10060",
+        ]
+        return any(k in msg for k in transient_keys)
+
+    def _reset_datahub(self, reason: str = None):
+        if reason:
+            logger.warning(f"reconnect datahub: {reason}")
+        self.datahub = DataHub()
+
+    def _fetch_price_with_retry(self, symbol: str, start_date: str, end_date: str):
+        max_retries = max(1, self.retry_cfg["max_retries"])
+        base_sleep = max(0.0, self.retry_cfg["base_sleep"])
+        max_sleep = max(base_sleep, self.retry_cfg["max_sleep"])
+        jitter = max(0.0, self.retry_cfg["jitter"])
+        reconnect = self.retry_cfg["reconnect"]
+        min_interval = max(0.0, self.retry_cfg["min_interval"])
+
+        last_err = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                df = self.datahub.fetch_price(symbol, start_date=start_date, end_date=end_date)
+                if min_interval > 0:
+                    time.sleep(min_interval)
+                return df
+            except Exception as e:
+                last_err = e
+                if not self._is_transient_error(e) or attempt >= max_retries:
+                    break
+                sleep_s = min(max_sleep, base_sleep * (2 ** (attempt - 1)))
+                if jitter:
+                    sleep_s += random.random() * jitter
+                logger.warning(f"fetch {symbol} failed ({attempt}/{max_retries}): {e}. retry in {sleep_s:.1f}s")
+                time.sleep(sleep_s)
+                if reconnect:
+                    self._reset_datahub("transient error")
+        logger.error(f"fetch {symbol} failed after {max_retries} attempts: {last_err}")
+        return None
 
     def _load_local_calendar(self):
         """加载本地日历，如果不存在则初始化为空"""
@@ -148,6 +217,7 @@ class DataUpdater:
             
         update_count = 0
         skip_count = 0
+        error_count = 0
         
         # 获取最新的市场交易日
         if self.trade_dates:
@@ -183,8 +253,12 @@ class DataUpdater:
                     skip_count += 1
                     continue
                     
-                df_new = self.datahub.fetch_price(symbol, start_date=start_date, end_date=self.today)
+                df_new = self._fetch_price_with_retry(symbol, start_date=start_date, end_date=self.today)
                 
+                if df_new is None:
+                    error_count += 1
+                    pbar.set_postfix({"Upd": update_count, "Skip": skip_count, "Err": error_count})
+                    continue
                 if not df_new.empty:
                     # 合并与去重
                     df_final = pd.concat([df_local, df_new], axis=0)
@@ -196,12 +270,14 @@ class DataUpdater:
                 else:
                     skip_count += 1
                     
-                pbar.set_postfix({"Upd": update_count, "Skip": skip_count})
+                pbar.set_postfix({"Upd": update_count, "Skip": skip_count, "Err": error_count})
                 
             except Exception as e:
                 logger.error(f"更新 {symbol} 失败: {e}")
+                error_count += 1
+                pbar.set_postfix({"Upd": update_count, "Skip": skip_count, "Err": error_count})
         
-        logger.info(f"更新完成。已更新: {update_count}, 跳过(无需更新/停牌): {skip_count}")
+        logger.info(f"更新完成。已更新: {update_count}, 跳过(无需更新/停牌): {skip_count}, 失败: {error_count}")
 
 def verify_data_freshness(step_name, data_dir, file_pattern="*.parquet", single_file=None):
     """

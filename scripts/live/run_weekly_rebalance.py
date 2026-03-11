@@ -107,22 +107,43 @@ class WeeklyRebalanceConfig:
         print("=" * 60)
 
 
-def load_today_picks(max_stocks=10):
-    """加载今日推荐"""
+def load_today_picks(max_stocks=10, lookback_days=10):
+    """加载今日推荐
+
+    - 先搜索今日
+    - 若今日不存在，向前回溯 lookback_days 天搜索最近的推荐
+    - 若仍未找到，回退到目录中最新的 CSV
+    """
     import pandas as pd
     
     daily_picks_dir = project_root / 'reports' / 'daily_picks'
-    today = datetime.now().strftime('%Y%m%d')
+    today = datetime.now().date()
     
-    pattern = f"*{today}*.csv"
-    matching_files = list(daily_picks_dir.glob(pattern))
+    matching_files = []
+    used_date = None
+    lookback_days = max(1, int(lookback_days))
+    for i in range(lookback_days):
+        date_str = (today - pd.Timedelta(days=i)).strftime('%Y%m%d')
+        pattern = f"*{date_str}*.csv"
+        matches = list(daily_picks_dir.glob(pattern))
+        if matches:
+            matching_files = matches
+            used_date = date_str
+            break
     
     if not matching_files:
-        logger.warning(f"未找到 {today} 的推荐文件")
-        return None
-    
-    latest_file = max(matching_files, key=lambda x: x.stat().st_mtime)
-    logger.info(f"[OK] 找到推荐文件: {latest_file.name}")
+        all_csv = list(daily_picks_dir.glob("*.csv"))
+        if not all_csv:
+            logger.warning("未找到任何推荐文件")
+            return None
+        latest_file = max(all_csv, key=lambda x: x.stat().st_mtime)
+        logger.warning(f"未找到今日/近期开盘推荐，使用目录中最新文件: {latest_file.name}")
+    else:
+        latest_file = max(matching_files, key=lambda x: x.stat().st_mtime)
+        if used_date != today.strftime('%Y%m%d'):
+            logger.warning(f"今日无推荐，使用最近 {used_date} 的推荐文件: {latest_file.name}")
+        else:
+            logger.info(f"[OK] 找到推荐文件: {latest_file.name}")
     
     df = pd.read_csv(latest_file, dtype={'symbol': str})
     if 'symbol' in df.columns:
