@@ -1,105 +1,150 @@
 # src/data_source/baostock_source.py
 
+import datetime
+import io
+import os
+import contextlib
+
 import baostock as bs
 import pandas as pd
-import datetime
+
 from src.data_source.base import BaseDataSource
-from src.utils.logger import get_logger
 from src.utils.config import GLOBAL_CONFIG
+from src.utils.logger import get_logger
 
 logger = get_logger()
 
+
 class BaostockSource(BaseDataSource):
     def __init__(self):
-        """初始化并登录 Baostock"""
-        self.system = bs.login()
-        if self.system.error_code != '0':
-            logger.error(f"Baostock 登录失败: {self.system.error_msg}")
+        """Initialize and login to Baostock."""
+        retry_cfg = GLOBAL_CONFIG.get("data", {}).get("retry", {})
+        self.quiet_baostock_console = bool(retry_cfg.get("quiet_baostock_console", True))
+
+        with self._silent_baostock_console():
+            self.system = bs.login()
+        if self.system.error_code != "0":
+            logger.error(f"Baostock login failed: {self.system.error_msg}")
         else:
-            logger.info("Baostock 登录成功")
+            logger.info("Baostock login success")
+
+    @contextlib.contextmanager
+    def _silent_baostock_console(self):
+        """
+        Suppress third-party direct console output.
+        Keep our own logger output unchanged.
+        """
+        if not self.quiet_baostock_console:
+            yield
+            return
+
+        devnull_fd = None
+        stdout_fd = None
+        stderr_fd = None
+        try:
+            try:
+                devnull_fd = os.open(os.devnull, os.O_RDWR)
+                stdout_fd = os.dup(1)
+                stderr_fd = os.dup(2)
+                os.dup2(devnull_fd, 1)
+                os.dup2(devnull_fd, 2)
+            except OSError:
+                # Fallback to Python-level redirect only.
+                devnull_fd = None
+                stdout_fd = None
+                stderr_fd = None
+
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                yield
+        finally:
+            if stdout_fd is not None:
+                try:
+                    os.dup2(stdout_fd, 1)
+                except OSError:
+                    pass
+                try:
+                    os.close(stdout_fd)
+                except OSError:
+                    pass
+            if stderr_fd is not None:
+                try:
+                    os.dup2(stderr_fd, 2)
+                except OSError:
+                    pass
+                try:
+                    os.close(stderr_fd)
+                except OSError:
+                    pass
+            if devnull_fd is not None:
+                try:
+                    os.close(devnull_fd)
+                except OSError:
+                    pass
 
     def __del__(self):
-        """析构时退出登录 (增加异常捕获以防止 Python 关闭时的报错)"""
+        """Logout safely on object cleanup."""
         try:
-            # 在 Python 关闭过程中，bs 模块或内部依赖可能已被回收
-            # 捕获 AttributeError, ImportError 等常见关闭错误
             if bs:
-                bs.logout()
+                with self._silent_baostock_console():
+                    bs.logout()
         except (AttributeError, ImportError, TypeError):
             pass
-        except Exception as e:
-            # 其他未知错误可以打印，但在关闭时通常不需要
+        except Exception:
             pass
 
     def get_stock_list(self) -> pd.DataFrame:
-        """
-        获取 A 股股票列表
-        使用 query_all_stock 接口获取指定日期的全市场代码
-        """
-        logger.info("正在从 Baostock 获取全市场股票列表...")
-        
+        """Fetch A-share stock list from Baostock."""
+        logger.info("Fetching stock list from Baostock...")
+
         data_list = []
         rs = None
-        
-        # 尝试获取最近 10 天内的有效列表 (因为如果是周末或节假日，当天可能没数据)
+
+        # Try the latest 10 days, because weekend/holiday may have no data.
         for i in range(10):
             date_target = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y-%m-%d")
-            # 接口: query_all_stock(day="YYYY-MM-DD")
-            rs = bs.query_all_stock(day=date_target)
-            
-            if rs.error_code == '0' and rs.next():
-                # 只要能取到第一行，说明这天有数据，重置游标并读取
-                # Baostock 的 rs.next() 会消耗一行，所以我们这里判断后需要重新循环获取
-                # 或者更简单的：直接读完，看长度
-                current_list = []
-                # 注意：刚才调用了一次 next()，如果不重新 query，第一行就丢了
-                # 所以确认有数据后，需要重新 query 一次，或者手动把第一行加进去
-                # 为简单起见，这里逻辑是：只要 rs 里有数据，我们就用这个 rs
-                
-                # 重新查询一遍确保完整
+            with self._silent_baostock_console():
                 rs = bs.query_all_stock(day=date_target)
-                while rs.error_code == '0' and rs.next():
+
+            if rs.error_code != "0":
+                logger.warning(
+                    f"query_all_stock failed on {date_target}: "
+                    f"error_code={rs.error_code}, error_msg={rs.error_msg}"
+                )
+                continue
+
+            current_list = []
+            with self._silent_baostock_console():
+                while rs.next():
                     current_list.append(rs.get_row_data())
-                
-                if current_list:
-                    data_list = current_list
-                    logger.info(f"成功获取股票列表，日期: {date_target}")
-                    break
-        
+
+            if current_list:
+                data_list = current_list
+                logger.info(f"stock list fetched on {date_target}")
+                break
+
         if not data_list:
-            logger.warning("Baostock 未返回股票列表（连续10天无数据），请检查网络或 Baostock 服务状态。")
+            logger.warning("Baostock returned no stock list in recent 10 days")
             return pd.DataFrame()
 
         df = pd.DataFrame(data_list, columns=rs.fields)
-        # query_all_stock 返回列: ["code", "tradeStatus", "code_name"]
-        
-        # === 1. 字段标准化 ===
-        df = df.rename(columns={
-            "code": "symbol",
-            "code_name": "name"
-        })
-        
-        # 转换 symbol: "sh.600000" -> "600000"
-        df["bs_code"] = df["symbol"] # 保留原始带前缀代码，后续查价格可能用到
+        df = df.rename(columns={"code": "symbol", "code_name": "name"})
+
+        # Keep full code and strip market prefix for local filename usage.
+        df["bs_code"] = df["symbol"]
         df["symbol"] = df["symbol"].apply(lambda x: x.split(".")[-1])
-        
-        # 补充 list_date (query_all_stock 不返回上市日期，给个默认值避免报错)
-        df["list_date"] = "1990-01-01" 
 
-        # === 2. 规则过滤 ===
+        # query_all_stock does not return list date.
+        df["list_date"] = "1990-01-01"
+
         stock_pool_cfg = GLOBAL_CONFIG.get("data", {}).get("stock_pool", {})
-        
-        # 过滤停牌 (tradeStatus=1 为交易)
-        if stock_pool_cfg.get("only_tradable", True):
-             # 注意 Baostock 返回的是字符串 "1"
-             df = df[df["tradeStatus"] == "1"]
 
-        # 过滤 ST
+        if stock_pool_cfg.get("only_tradable", True):
+            df = df[df["tradeStatus"] == "1"]
+
         if stock_pool_cfg.get("exclude_st", True):
             df = df[~df["name"].str.contains("ST", na=False)]
             df = df[~df["name"].str.contains("退", na=False)]
 
-        # 过滤板块
         if not stock_pool_cfg.get("include_kcb", False):
             df = df[~df["symbol"].str.startswith("688")]
         if not stock_pool_cfg.get("include_cyb", False):
@@ -107,14 +152,11 @@ class BaostockSource(BaseDataSource):
         if not stock_pool_cfg.get("include_bj", False):
             df = df[~df["symbol"].str.match(r"^(8|4|92)")]
 
-        logger.info(f"股票列表获取完成，共 {len(df)} 只。")
+        logger.info(f"stock list fetched: {len(df)} symbols")
         return df.reset_index(drop=True)
 
     def get_price(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """
-        获取日线数据
-        """
-        # 构造 Baostock 需要的带前缀代码 (sh.xxxxxx)
+        """Fetch daily price data."""
         if "." not in symbol:
             if symbol.startswith("6"):
                 bs_symbol = f"sh.{symbol}"
@@ -127,100 +169,101 @@ class BaostockSource(BaseDataSource):
         else:
             bs_symbol = symbol
 
-        # adjustflag: 2=前复权
         fields = "date,open,high,low,close,volume,amount,turn"
-        
-        rs = bs.query_history_k_data_plus(
-            bs_symbol,
-            fields,
-            start_date=start_date,
-            end_date=end_date,
-            frequency="d",
-            adjustflag="2"
-        )
-        
+        with self._silent_baostock_console():
+            rs = bs.query_history_k_data_plus(
+                bs_symbol,
+                fields,
+                start_date=start_date,
+                end_date=end_date,
+                frequency="d",
+                adjustflag="2",
+            )
+        if rs.error_code != "0":
+            raise RuntimeError(
+                f"Baostock get_price failed for {bs_symbol}: "
+                f"error_code={rs.error_code}, error_msg={rs.error_msg}"
+            )
+
         data_list = []
-        while (rs.error_code == '0') and rs.next():
-            data_list.append(rs.get_row_data())
-            
+        with self._silent_baostock_console():
+            while rs.next():
+                data_list.append(rs.get_row_data())
+
         if not data_list:
             return pd.DataFrame()
 
         df = pd.DataFrame(data_list, columns=fields.split(","))
-        
-        # 类型转换
         df["date"] = pd.to_datetime(df["date"])
-        num_cols = ["open", "high", "low", "close", "volume", "amount", "turn"]
-        for col in num_cols:
+        for col in ["open", "high", "low", "close", "volume", "amount", "turn"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-            
-        df = df.rename(columns={"turn": "turnover"})
 
+        df = df.rename(columns={"turn": "turnover"})
         return df
 
     def get_index_price(self, index_code: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """
-        获取指数日线数据
-        :param index_code: 如 "000300.SH" 或 "399001.SZ"
-        :param start_date: 开始日期 "YYYY-MM-DD"
-        :param end_date: 结束日期 "YYYY-MM-DD"
-        """
-        # 1. 格式转换: "000300.SH" -> "sh.000300"
+        """Fetch daily index data."""
         if "." in index_code:
             code, market = index_code.split(".")
             bs_symbol = f"{market.lower()}.{code}"
         else:
-            # 默认沪市指数
             bs_symbol = f"sh.{index_code}"
-        
-        logger.info(f"正在通过 Baostock 下载指数数据: {bs_symbol}")
-        
-        # 2. 调用 Baostock 接口
+
+        logger.info(f"Fetching index data from Baostock: {bs_symbol}")
+
         fields = "date,open,high,low,close,volume,amount"
-        
-        rs = bs.query_history_k_data_plus(
-            bs_symbol,
-            fields,
-            start_date=start_date,
-            end_date=end_date,
-            frequency="d",
-            adjustflag="3"  # 指数不需要复权，使用 3=不复权
-        )
-        
+        with self._silent_baostock_console():
+            rs = bs.query_history_k_data_plus(
+                bs_symbol,
+                fields,
+                start_date=start_date,
+                end_date=end_date,
+                frequency="d",
+                adjustflag="3",
+            )
+        if rs.error_code != "0":
+            raise RuntimeError(
+                f"Baostock get_index_price failed for {bs_symbol}: "
+                f"error_code={rs.error_code}, error_msg={rs.error_msg}"
+            )
+
         data_list = []
-        while (rs.error_code == '0') and rs.next():
-            data_list.append(rs.get_row_data())
-        
+        with self._silent_baostock_console():
+            while rs.next():
+                data_list.append(rs.get_row_data())
+
         if not data_list:
-            logger.warning(f"Baostock 未返回指数数据: {bs_symbol}")
+            logger.warning(f"Baostock returned empty index data: {bs_symbol}")
             return pd.DataFrame()
-        
+
         df = pd.DataFrame(data_list, columns=fields.split(","))
-        
-        # 3. 类型转换
         df["date"] = pd.to_datetime(df["date"])
-        num_cols = ["open", "high", "low", "close", "volume", "amount"]
-        for col in num_cols:
+        for col in ["open", "high", "low", "close", "volume", "amount"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-        
-        logger.info(f"指数数据下载完成，共 {len(df)} 条记录")
+
+        logger.info(f"Index data fetched: {len(df)} rows")
         return df.sort_values("date").reset_index(drop=True)
 
     def get_trade_calendar(self, start_date: str, end_date: str) -> pd.DataFrame:
-        """获取交易日历"""
-        rs = bs.query_trade_dates(start_date=start_date, end_date=end_date)
-        
+        """Fetch trade calendar."""
+        with self._silent_baostock_console():
+            rs = bs.query_trade_dates(start_date=start_date, end_date=end_date)
+        if rs.error_code != "0":
+            raise RuntimeError(
+                "Baostock get_trade_calendar failed: "
+                f"error_code={rs.error_code}, error_msg={rs.error_msg}"
+            )
+
         data_list = []
-        while (rs.error_code == '0') and rs.next():
-            data_list.append(rs.get_row_data())
-            
+        with self._silent_baostock_console():
+            while rs.next():
+                data_list.append(rs.get_row_data())
+
         if not data_list:
             return pd.DataFrame()
 
         df = pd.DataFrame(data_list, columns=rs.fields)
-        # 筛选交易日
         df = df[df["is_trading_day"] == "1"]
         df = df.rename(columns={"calendar_date": "date"})
         df["date"] = pd.to_datetime(df["date"])
-        
         return df[["date"]].reset_index(drop=True)
